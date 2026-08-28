@@ -161,6 +161,41 @@ test("rejects ambiguous exact URL recovery", async () => {
   );
 });
 
+test("waits on the bound tab when duplicate URLs are open", async () => {
+  const {
+    createTabIdentity,
+    resolveTabForUrlWait
+  } = await loadTabIdentity();
+  const identity = createTabIdentity({
+    id: "63176:8",
+    title: "Product",
+    url: "https://shop.example.com/item"
+  });
+  const duplicateTabs = [
+    {
+      id: "63176:7",
+      title: "Product",
+      url: "https://shop.example.com/item"
+    },
+    {
+      id: "63176:8",
+      title: "Product",
+      url: "https://shop.example.com/item"
+    }
+  ];
+
+  assert.equal(typeof resolveTabForUrlWait, "function");
+  assert.deepEqual(
+    resolveTabForUrlWait(
+      identity,
+      duplicateTabs,
+      "shop.example.com",
+      false
+    ),
+    duplicateTabs[1]
+  );
+});
+
 test("retargets an identity before an explicit navigation", async () => {
   const {
     createTabIdentity,

@@ -819,43 +819,30 @@ var run = (function (globalObject) {
     var deadline = Date.now() + timeoutMs;
 
     while (Date.now() <= deadline) {
-      var candidates = listTabs().filter(function (tab) {
-        if (
-          tabWindowId(tab.id) !== params.tabIdentity.windowId
-        ) {
-          return false;
-        }
+      var candidate = resolveTabForUrlWait(
+        params.tabIdentity,
+        listTabs(),
+        expected,
+        exact
+      );
 
-        var url = String(tab.url || "");
-        return exact
-          ? url === expected
-          : url.indexOf(expected) !== -1;
-      });
-
-      if (candidates.length === 1) {
+      if (candidate) {
         try {
           var pageState = inspectControlledDocument(
-            candidates[0].id
+            candidate.id
           );
 
-          if (pageState.url === candidates[0].url) {
-            updateTabIdentity(params.tabIdentity, candidates[0]);
-            controlLifecycle.activate(candidates[0].id);
-            ensureControlIndicator(candidates[0].id);
+          if (pageState.url === candidate.url) {
+            controlLifecycle.activate(candidate.id);
+            ensureControlIndicator(candidate.id);
             return {
               matched: true,
-              url: candidates[0].url
+              url: candidate.url
             };
           }
         } catch (error) {
           // Safari may still be replacing the page document.
         }
-      }
-
-      if (candidates.length > 1) {
-        throw new Error(
-          "stale_tab_handle: ambiguous URL candidates"
-        );
       }
 
       foundation.NSThread.sleepForTimeInterval(0.05);

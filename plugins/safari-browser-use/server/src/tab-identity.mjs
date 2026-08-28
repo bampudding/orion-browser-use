@@ -125,3 +125,39 @@ export function resolveTabIdentity(identity, tabs) {
 
   throw new Error("stale_tab_handle: tab not found " + identity.id);
 }
+
+export function resolveTabForUrlWait(
+  identity,
+  tabs,
+  expected,
+  exact
+) {
+  const matches = tab => {
+    const url = String(tab.url || "");
+
+    return exact ? url === expected : url.includes(expected);
+  };
+  const indexed = tabs.find(tab =>
+    tab.id === identity.id && matches(tab)
+  );
+
+  if (indexed) {
+    return updateTabIdentity(identity, indexed);
+  }
+
+  const candidates = tabs.filter(tab =>
+    tabWindowId(tab.id) === identity.windowId && matches(tab)
+  );
+
+  if (candidates.length === 1) {
+    return updateTabIdentity(identity, candidates[0]);
+  }
+
+  if (candidates.length > 1) {
+    throw new Error(
+      "stale_tab_handle: ambiguous URL candidates"
+    );
+  }
+
+  return null;
+}
