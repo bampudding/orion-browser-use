@@ -1,17 +1,17 @@
 # Safari Browser Use — Operating Guide
 
 This guide is returned at runtime by `browser.documentation()`. It ships inside
-the plugin's built server, so it always matches the installed API. Read it in
-full before browser work and follow it; do not rely on remembered guidance from
-an earlier version.
+the bundled runtime, so it always matches the installed API. Read it in full
+before browser work and follow it; do not rely on remembered guidance from an
+earlier version.
 
-Every action runs through the `js` MCP tool as one synchronous JavaScript cell
-against the injected `browser`, `googleAccounts`, `googleDocs`, and
-`googleSheets` objects, over Safari's Apple Events interface. Bindings declared
-with `var` persist across cells until `js_reset`; `const` and `let` are local to
-one cell. Define `tab` once and keep using it. Re-query a tab only when you
-intentionally switch tabs, after `js_reset`, or after a failed cell that never
-created the binding.
+Every action runs as one synchronous JavaScript cell against the injected
+`browser`, `googleAccounts`, `googleDocs`, and `googleSheets` objects over
+Safari's Apple Events interface. Bindings declared with `var` persist across
+cells until the session is reset; `const` and `let` are local to one cell. Define
+one tab binding per task-owned website and keep using it for that site. Re-query
+a tab only when you intentionally switch tabs, after a session reset, or after a
+failed cell that never created the binding.
 
 ## Browser Safety
 
@@ -49,8 +49,43 @@ A request to inspect or prepare a form does not authorize submitting it.
 
 ## Tab Resolution
 
-Resolve the target tab before you operate on it. When the user names a website,
-URL, or page title, list the open tabs first:
+Open a new task-owned tab for browser automation by default, even when a matching
+page is already open. Existing tabs belong to the user. Do not reuse, navigate,
+reload, or inspect a user-owned tab unless the user explicitly asks you to use
+that current or specific existing tab.
+
+```js
+var tab = browser.tabs.new({ active: false })
+tab.goto("https://example.com")
+```
+
+`browser.tabs.new()` opens in the current Safari window without activation by
+default. The selected tab remains unchanged while the task tab is created,
+navigated, inspected, and operated through page JavaScript. Pass
+`{ active: true }` only when the user explicitly asks to see the task tab now.
+
+Safari's Apple Events API does not expose inactive Tab Groups. A background task
+tab therefore belongs to the Tab Group currently open in its Safari window. If
+the user switches that window to another Tab Group and the task tab can no longer
+be resolved safely, stop instead of selecting a group or falling back to another
+tab. An optional `windowId` can target a known Safari window without changing
+this rule:
+
+```js
+var tab = browser.tabs.new({
+  windowId: knownWindowId,
+  active: false
+})
+```
+
+An explicit `windowId` targets only that Safari window. If it no longer exists,
+the call fails and does not fall back to the user's current window.
+
+When one task intentionally operates on different websites, use separate
+task-owned tabs, one for each site. Within the same website, continue navigating
+in the same task-owned tab instead of opening a new tab for every page.
+
+If the user explicitly asks to use an existing tab, list the open tabs first:
 
 ```js
 var tabs = browser.tabs.list()
@@ -63,14 +98,9 @@ Select the matching tab by ID from that metadata:
 var tab = browser.tabs.get("matching-tab-id")
 ```
 
-If no open tab matches, open a new tab and navigate it to the requested site.
 Do not inspect an unrelated current tab. Only use `browser.tabs.selected()` when
-the user explicitly asks for the current tab or provides no target.
-
-Prefer operating an already-open tab when the page you need is open, instead of
-opening a duplicate tab to the same URL. If a tab is already on the target URL,
-do not `goto()` it again; that reloads the page and can discard the user's
-in-progress input.
+the user explicitly asks for the current tab. If the requested existing tab is
+ambiguous, ask instead of guessing.
 
 A `tab` binding automatically reacquires its target when another tab closes or
 moves and its URL is unique in the original window. The runtime never recovers
@@ -94,12 +124,21 @@ finishes early:
 browser.release()
 ```
 
-`js_reset` and MCP shutdown also release control, and a 60-second inactivity
-lease removes a stale indicator if the session ends unexpectedly.
+Session reset and runtime shutdown also release control, and a 60-second
+inactivity lease removes a stale indicator if the session ends unexpectedly.
 
-Do not close tabs by default. Only close a tab you created for this task and no
-longer need, by its own tab binding. Never close, reload, or reorder tabs the
-user was already using, and never close tabs by matching their URL or title.
+Close a task-owned background tab by default when its task finishes or is
+cancelled:
+
+```js
+tab.close()
+```
+
+Keep it only when the user needs to view or inspect the result. Keeping a task
+tab means leaving it open in the background; do not select, pin, or reorder it.
+`tab.close()` refuses to close the selected tab, so cleanup cannot replace the
+page the user is currently viewing. Never close a user-owned tab, and never close
+tabs by matching their URL or title.
 
 ## Browser Control Interruption
 
@@ -298,11 +337,10 @@ stable keys over localized text.
 
 ## API Reference
 
-The MCP server exposes two tools: `js({ title, code })` runs one synchronous
-JavaScript cell in the persistent REPL, and `js_reset()` clears user bindings and
-restores the injected `browser` object. Cells are synchronous and return the
-value of the final expression. This reference is the full supported surface; do
-not call methods that are not listed here.
+The runtime executes synchronous JavaScript cells in a persistent REPL. Resetting
+the session clears user bindings and restores the injected `browser` object.
+Cells return the value of the final expression. This reference is the full
+supported surface; do not call methods that are not listed here.
 
 ### Browser
 
@@ -314,7 +352,7 @@ not call methods that are not listed here.
 | `browser.tabs.list()` | List open Safari tabs |
 | `browser.tabs.selected()` | Return the selected `Tab` |
 | `browser.tabs.get(id)` | Return a tab by ID |
-| `browser.tabs.new()` | Open and return a blank tab |
+| `browser.tabs.new(options?)` | Open a blank background tab; pass `{ active: true }` only for explicit foreground use, or `windowId` for a known window |
 
 ### Google Accounts
 
@@ -385,7 +423,7 @@ clipboard formats afterward. Always close a connected editor with
 | `tab.title()` | Read the current title |
 | `tab.url()` | Read the current URL |
 | `tab.goto(url)` | Navigate to an HTTP or HTTPS URL |
-| `tab.close()` | Close the tab |
+| `tab.close()` | Close the tab unless it is currently selected |
 | `tab.playwright.domSnapshot()` | Read a semantic DOM snapshot |
 | `tab.playwright.canvasSnapshot(selector, options?)` | Capture one `<canvas>` as an image the model can see |
 | `tab.playwright.scrollBy(deltaX, deltaY)` | Scroll the page by explicit pixel offsets |
@@ -455,12 +493,23 @@ var buy = card.getByRole("button", { name: "Buy", exact: true })
 | `selectOption(value)` | Select native `<select>` options |
 | `canvasSnapshot(options?)` | Capture one `<canvas>` element as a PNG image the model can see |
 | `setInputFiles(paths)` | Upload local file(s) into a `<input type="file">` |
+| `uploadFiles(paths, options?)` | Upload through a visible trigger that owns a static or dynamic file input |
 | `dropFiles(paths)` | Drop local file(s) onto a drag-and-drop upload zone |
 | `scrollIntoView(options?)` | Scroll one strict match into view without clicking it |
 | `waitFor(options?)` | Wait for the locator |
 
 `click`, `fill`, `type`, `press`, and single-element reads use strict mode and
 throw when the locator resolves to zero or multiple elements.
+
+`click()` reports observable browser transitions. A same-tab link or form returns
+`transition.kind: "same-tab"`; a newly opened tab — including one opened by page
+JavaScript — returns `"new-tab"` and includes `transition.tab` when it can be
+identified uniquely (or `transition.tabs` when several distinct tabs opened); a
+download link returns `"download"` with its URL and suggested filename. When a
+slow same-tab navigation exceeds the indicator restoration window, the click
+remains successful and returns `transition.pending: true`; call `waitForURL()`
+and `waitForLoadState()` to finish the observable wait instead of retrying the
+click.
 
 `press()` dispatches synthetic page events, not trusted Safari keyboard input.
 Keys that depend on browser-default behavior — Tab, PageDown, PageUp, Home, End,
@@ -516,6 +565,12 @@ Provide absolute local paths; the server reads the bytes and reconstructs the
 files inside the page.
 
 ```js
+// Visible upload button or menu item
+tab.playwright.getByRole("button", {
+  name: "Upload file",
+  exact: true
+}).uploadFiles("/Users/me/photo.png")
+
 // Standard <input type="file">
 tab.playwright.locator("#avatar").setInputFiles("/Users/me/photo.png")
 
@@ -523,13 +578,25 @@ tab.playwright.locator("#avatar").setInputFiles("/Users/me/photo.png")
 tab.playwright.locator("#dropzone").dropFiles(["/Users/me/a.pdf", "/Users/me/b.pdf"])
 ```
 
+Never click a visible upload control before calling `uploadFiles()`. The method
+arms a one-shot interceptor first, then clicks the trigger and captures a static
+or dynamically created file input without opening the system file chooser.
+
+Use `setInputFiles()` when the latest page state identifies the actual file
+input. Use `dropFiles()` only for a confirmed drag-and-drop target. If
+`uploadFiles()` reports that no file input was captured, do not retry by clicking
+the upload control; report that the site requires a native file chooser.
+
 `setInputFiles()` assigns the files through a `DataTransfer` and dispatches
 `input` and `change`; `dropFiles()` dispatches `dragenter`, `dragover`, and `drop`
 carrying the files. Both return `{ files: [{ name, size, type }], via }`.
 
-File **downloads** need no special API: locate the download control and `click()`
-it. Safari saves the file to the user's Downloads folder using its normal download
-flow.
+For file **downloads**, locate the download control and `click()` it. The result
+identifies a DOM-declared download with `transition.kind: "download"`, its URL,
+and any suggested filename. This confirms that the click was dispatched, not
+that Safari finished the download. Safari controls the destination and completion
+state through its normal download flow; the Apple Events API does not expose a
+reliable final local path.
 
 ### Unsupported Operations
 
@@ -546,9 +613,10 @@ JavaScript channel cannot perform them safely:
 Bindings persist across cells:
 
 ```js
-var tab = browser.tabs.selected()
+var tab = browser.tabs.new()
+tab.goto("https://example.com")
 var login = tab.playwright.getByRole("button", { name: "Sign in" })
 ```
 
 A later cell can reuse `tab` and `login`. Prefer `var` for reusable bindings, and
-call `js_reset` only when a clean session is required.
+reset the session only when a clean environment is required.

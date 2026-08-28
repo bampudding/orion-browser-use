@@ -1,0 +1,14 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "safari-browser-use": {
+      "type": "stdio",
+      "command": "osascript",
+      "args": [
+        "-l",
+        "JavaScript",
+        "${PLUGIN_ROOT}/skills/control-safari/scripts/runtime/safari-repl.jxa.js"
+      ]
+    }
+  }
+}

@@ -20,12 +20,18 @@ test("all client manifests expose the shared skill and native MCP config", async
     ["plugin.json", "./copilot.mcp.json"],
     [".cursor-plugin/plugin.json", "./cursor.mcp.json"]
   ];
+  let sharedVersion;
 
   for (const [path, mcpServers] of manifests) {
     const manifest = await readJson(path);
 
     assert.equal(manifest.name, "safari-browser-use");
-    assert.equal(manifest.version, "0.1.1");
+    assert.match(
+      manifest.version,
+      /^0\.1\.1(?:\+codex\.[A-Za-z0-9.-]+)?$/
+    );
+    sharedVersion ??= manifest.version;
+    assert.equal(manifest.version, sharedVersion);
     assert.equal(manifest.skills, "./skills/");
     assert.equal(manifest.mcpServers, mcpServers);
   }
@@ -33,10 +39,19 @@ test("all client manifests expose the shared skill and native MCP config", async
 
 test("client MCP configurations start JXA with the system osascript", async () => {
   const configurations = [
-    ["codex.mcp.json", "dist/server.jxa.js"],
-    [".mcp.json", "${CLAUDE_PLUGIN_ROOT}/dist/server.jxa.js"],
-    ["copilot.mcp.json", "${PLUGIN_ROOT}/dist/server.jxa.js"],
-    ["cursor.mcp.json", "${CURSOR_PLUGIN_ROOT}/dist/server.jxa.js"]
+    ["codex.mcp.json", "dist/safari-repl.jxa.js"],
+    [
+      ".mcp.json",
+      "${CLAUDE_PLUGIN_ROOT}/dist/safari-repl.jxa.js"
+    ],
+    [
+      "copilot.mcp.json",
+      "${PLUGIN_ROOT}/dist/safari-repl.jxa.js"
+    ],
+    [
+      "cursor.mcp.json",
+      "${CURSOR_PLUGIN_ROOT}/dist/safari-repl.jxa.js"
+    ]
   ];
 
   for (const [path, serverPath] of configurations) {
@@ -59,6 +74,14 @@ test("client MCP configurations start JXA with the system osascript", async () =
   assert.deepEqual(
     copilot.mcpServers["safari-browser-use"].tools,
     ["*"]
+  );
+
+  await access(new URL(
+    "dist/safari-repl.jxa.js",
+    pluginRoot
+  ));
+  await assert.rejects(
+    access(new URL("dist/server.jxa.js", pluginRoot))
   );
 });
 
@@ -120,7 +143,15 @@ test("repository installation guide covers every supported client", async () => 
     new URL("README.md", repositoryRoot),
     "utf8"
   );
+  const pluginOption = readme.indexOf(
+    "### 1. Plugin — one-line prompt"
+  );
+  const skillOption = readme.indexOf(
+    "### 2. Skill — one-line command"
+  );
 
+  assert.ok(pluginOption >= 0);
+  assert.ok(skillOption > pluginOption);
   assert.match(readme, /GitHub Copilot/);
   assert.match(
     readme,
@@ -144,6 +175,17 @@ test("repository installation guide covers every supported client", async () => 
   );
   assert.match(readme, /Cursor/);
   assert.match(readme, /\.cursor\/plugins\/local/);
+  assert.match(
+    readme,
+    /npx skills add vibevibe-labs\/safari-browser-use --skill control-safari -g/
+  );
+  assert.match(
+    readme,
+    /agents that do not support plugins/i
+  );
+  assert.match(readme, /Skill-only/i);
+  assert.doesNotMatch(readme, /\bPi\b/);
+  assert.doesNotMatch(readme, /\bpi install\b/);
   assert.match(readme, /using the current client's plugin installer/);
   assert.match(readme, /Stop after installation/);
   assert.match(readme, /give me one example request/);
@@ -182,7 +224,7 @@ test("skill uses Apple Events without an extension bridge", async () => {
   assert.doesNotMatch(skill, /bridge|Safari extension/i);
 });
 
-test("runtime guide resolves an explicitly named site before selecting a tab", async () => {
+test("runtime guide only selects a user tab when explicitly requested", async () => {
   const guide = await readFile(
     new URL(
       "server/src/documentation.md",
@@ -194,12 +236,44 @@ test("runtime guide resolves an explicitly named site before selecting a tab", a
   assert.match(guide, /browser\.tabs\.list\(\)/);
   assert.match(
     guide,
-    /Only use `browser\.tabs\.selected\(\)`.*current tab.*no target/is
+    /Only use `browser\.tabs\.selected\(\)`.*explicitly asks.*current tab/is
   );
   assert.match(guide, /Do not inspect an unrelated current tab/i);
+  assert.doesNotMatch(
+    guide,
+    /current tab or provides no target/i
+  );
 });
 
-test("Codex prompts defer to an explicitly named target tab", async () => {
+test("runtime guide creates task-owned tabs instead of reusing user tabs by default", async () => {
+  const guide = await readFile(
+    new URL(
+      "server/src/documentation.md",
+      pluginRoot
+    ),
+    "utf8"
+  );
+
+  assert.match(guide, /new task-owned tab.*by default/is);
+  assert.match(
+    guide,
+    /do not reuse.*user.*tab.*unless the user explicitly asks/is
+  );
+  assert.match(
+    guide,
+    /different (?:websites|sites).*separate\s+task-owned tabs/is
+  );
+  assert.match(
+    guide,
+    /same (?:website|site).*same task-owned tab/is
+  );
+  assert.doesNotMatch(
+    guide,
+    /Prefer operating an already-open tab/
+  );
+});
+
+test("Codex prompts create a task tab unless reuse is explicitly requested", async () => {
   const agent = await readFile(
     new URL(
       "skills/control-safari/agents/openai.yaml",
@@ -209,15 +283,15 @@ test("Codex prompts defer to an explicitly named target tab", async () => {
   );
   const manifest = await readJson(".codex-plugin/plugin.json");
 
-  assert.match(agent, /Safari tab I identify/i);
-  assert.doesNotMatch(agent, /my current Safari/i);
+  assert.match(agent, /new task tab by default/i);
+  assert.match(agent, /only reuse.*when I explicitly request/i);
   assert.match(
     manifest.interface.defaultPrompt,
-    /Safari tab I identify/i
+    /new task tab by default/i
   );
-  assert.doesNotMatch(
+  assert.match(
     manifest.interface.defaultPrompt,
-    /the current page/i
+    /only reuse.*when I explicitly request/i
   );
 });
 
@@ -290,6 +364,21 @@ test("runtime guide documents bounded virtualized-list collection", async () => 
   assert.doesNotMatch(guide, /press\(["'](?:End|PageDown|Space|Tab)/);
   assert.match(guide, /allAttributes/);
   assert.match(guide, /synthetic/i);
+});
+
+test("runtime guide prevents unmanaged file chooser dialogs", async () => {
+  const guide = await readFile(
+    new URL("server/src/documentation.md", pluginRoot),
+    "utf8"
+  );
+
+  assert.match(guide, /uploadFiles/);
+  assert.match(
+    guide,
+    /never click.*upload.*before.*uploadFiles/is
+  );
+  assert.match(guide, /dynamic.*file input/is);
+  assert.match(guide, /system file chooser/i);
 });
 
 test("control indicator docs describe only the page overlay", async () => {

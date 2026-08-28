@@ -38,6 +38,8 @@ export function runPageOperation(
     "data-safari-browser-use-gesture-path";
   const gesturePointAttribute =
     "data-safari-browser-use-gesture-point";
+  const fileUploadSessionKey =
+    "__safari_browser_use_file_upload_session__";
 
   function hideControlIndicator() {
     window.clearTimeout(window[controlTimerKey]);
@@ -166,61 +168,101 @@ export function runPageOperation(
     return window[documentIdKey];
   }
 
-  function expectsDocumentNavigation(element) {
+  function navigationTransition(element) {
     const anchor = element.closest?.("a[href]");
 
     if (anchor) {
       const target =
         (anchor.getAttribute("target") || "_self").toLowerCase();
-
-      if (
-        anchor.hasAttribute("download") ||
-        (target !== "_self" && target !== "")
-      ) {
-        return false;
-      }
+      let destination;
 
       try {
-        const current = new URL(window.location.href);
-        const destination = new URL(anchor.href, current);
-        const withoutHash = value =>
-          `${value.origin}${value.pathname}${value.search}`;
-
-        return (
-          (destination.protocol === "http:" ||
-            destination.protocol === "https:") &&
-          (
-            destination.href === current.href ||
-            withoutHash(destination) !== withoutHash(current)
-          )
-        );
+        destination = new URL(anchor.href, window.location.href);
       } catch (error) {
-        return false;
+        return null;
       }
+
+      if (anchor.hasAttribute("download")) {
+        const transition = {
+          kind: "download",
+          url: destination.href
+        };
+        const suggestedFilename = anchor.getAttribute("download");
+
+        if (suggestedFilename) {
+          transition.suggestedFilename = suggestedFilename;
+        }
+
+        return transition;
+      }
+
+      if (target !== "_self" && target !== "") {
+        return {
+          kind: "new-tab",
+          url: destination.href
+        };
+      }
+
+      const current = new URL(window.location.href);
+      const withoutHash = value =>
+        `${value.origin}${value.pathname}${value.search}`;
+
+      return (
+        (destination.protocol === "http:" ||
+          destination.protocol === "https:") &&
+        (
+          destination.href === current.href ||
+          withoutHash(destination) !== withoutHash(current)
+        )
+      )
+        ? { kind: "same-tab", url: destination.href }
+        : null;
     }
 
     const form = element.form;
 
     if (!form) {
-      return false;
+      return null;
     }
 
     const target =
-      (form.getAttribute("target") || "_self").toLowerCase();
+      (
+        element.getAttribute("formtarget") ||
+        form.getAttribute("target") ||
+        "_self"
+      ).toLowerCase();
     const tagName = element.tagName.toLowerCase();
     const type = (
       element.getAttribute("type") ||
       (tagName === "button" ? "submit" : "")
     ).toLowerCase();
+    const submitsForm =
+      tagName === "button" && type === "submit" ||
+      tagName === "input" &&
+        (type === "submit" || type === "image");
 
-    return (
-      (target === "_self" || target === "") &&
-      (
-        tagName === "button" && type === "submit" ||
-        tagName === "input" &&
-          (type === "submit" || type === "image")
-      )
-    );
+    if (!submitsForm) {
+      return null;
+    }
+
+    const action =
+      element.getAttribute("formaction") ||
+      form.getAttribute("action") ||
+      window.location.href;
+    let destination;
+
+    try {
+      destination = new URL(action, window.location.href).href;
+    } catch (error) {
+      return null;
+    }
+
+    return {
+      kind: target === "_self" || target === ""
+        ? "same-tab"
+        : "new-tab",
+      url: destination
+    };
   }
 
   function controlCursorElement() {
@@ -837,6 +879,255 @@ export function runPageOperation(
     return { dataTransfer, meta };
   }
 
+  function isFileInput(element) {
+    return Boolean(
+      element &&
+      element.tagName &&
+      element.tagName.toLowerCase() === "input" &&
+      (element.getAttribute("type") ?? "").toLowerCase() === "file"
+    );
+  }
+
+  function assignFilesToInput(input, transfer, via) {
+    if (!isFileInput(input)) {
+      throw new Error("element_not_file_input");
+    }
+
+    input.files = transfer.dataTransfer.files;
+    input.dispatchEvent(
+      new window.Event("input", { bubbles: true })
+    );
+    input.dispatchEvent(
+      new window.Event("change", { bubbles: true })
+    );
+
+    return {
+      status: "uploaded",
+      files: transfer.meta,
+      via
+    };
+  }
+
+  function uploadSessionResult(session) {
+    return {
+      status: session.status,
+      token: session.token,
+      files: session.transfer.meta,
+      via: session.via ?? null,
+      error: session.error ?? null
+    };
+  }
+
+  function restoreUploadHooks(session) {
+    if (session.cleaned) {
+      return;
+    }
+
+    session.cleaned = true;
+    window.clearTimeout(session.timer);
+    window.removeEventListener(
+      "click",
+      session.captureClick,
+      true
+    );
+
+    const prototype = window.HTMLInputElement?.prototype;
+
+    if (prototype?.click === session.clickWrapper) {
+      prototype.click = session.originalClick;
+    }
+
+    if (
+      prototype &&
+      session.showPickerWrapper &&
+      prototype.showPicker === session.showPickerWrapper
+    ) {
+      prototype.showPicker = session.originalShowPicker;
+    }
+
+    if (
+      session.openPickerWrapper &&
+      window.showOpenFilePicker === session.openPickerWrapper
+    ) {
+      window.showOpenFilePicker = session.originalOpenPicker;
+    }
+  }
+
+  function finishUploadSession(session, input, via) {
+    if (session.status !== "pending") {
+      return uploadSessionResult(session);
+    }
+
+    try {
+      const result = assignFilesToInput(
+        input,
+        session.transfer,
+        via
+      );
+      session.status = result.status;
+      session.via = result.via;
+    } catch (error) {
+      session.status = "error";
+      session.error = error?.message ?? String(error);
+    } finally {
+      restoreUploadHooks(session);
+    }
+
+    return uploadSessionResult(session);
+  }
+
+  function armFileUpload(trigger, files, options) {
+    const transfer = buildFileTransfer(files);
+
+    if (isFileInput(trigger)) {
+      return assignFilesToInput(trigger, transfer, "input");
+    }
+
+    const existing = window[fileUploadSessionKey];
+
+    if (existing?.status === "pending") {
+      throw new Error("file_upload_already_armed");
+    }
+
+    const session = {
+      cleaned: false,
+      error: null,
+      status: "pending",
+      token:
+        `upload-${Date.now().toString(36)}-` +
+        Math.random().toString(36).slice(2),
+      transfer,
+      via: null
+    };
+    const prototype = window.HTMLInputElement?.prototype;
+
+    if (!prototype || typeof prototype.click !== "function") {
+      throw new Error("file_upload_interception_unavailable");
+    }
+
+    session.originalClick = prototype.click;
+    session.originalShowPicker = prototype.showPicker;
+    session.originalOpenPicker = window.showOpenFilePicker;
+    session.captureClick = event => {
+      const path = typeof event.composedPath === "function"
+        ? event.composedPath()
+        : [event.target];
+      const input = path.find(isFileInput);
+
+      if (!input || session.status !== "pending") {
+        return;
+      }
+
+      event.preventDefault();
+      finishUploadSession(session, input, "dynamic-input");
+    };
+    session.clickWrapper = function () {
+      if (!isFileInput(this) || session.status !== "pending") {
+        return session.originalClick.apply(this, arguments);
+      }
+
+      const click = new window.MouseEvent("click", {
+        bubbles: true,
+        cancelable: true,
+        composed: true
+      });
+      this.dispatchEvent(click);
+
+      if (session.status === "pending") {
+        finishUploadSession(session, this, "dynamic-input");
+      }
+    };
+
+    window.addEventListener("click", session.captureClick, true);
+    prototype.click = session.clickWrapper;
+
+    if (typeof prototype.showPicker === "function") {
+      session.showPickerWrapper = function () {
+        if (!isFileInput(this) || session.status !== "pending") {
+          return session.originalShowPicker.apply(this, arguments);
+        }
+
+        finishUploadSession(session, this, "dynamic-input");
+      };
+      prototype.showPicker = session.showPickerWrapper;
+    }
+
+    if (typeof window.showOpenFilePicker === "function") {
+      session.openPickerWrapper = function () {
+        session.status = "unsupported";
+        session.error = "native_file_picker_not_supported";
+        restoreUploadHooks(session);
+
+        return Promise.reject(
+          new window.DOMException(
+            "Native file picker interception is unavailable.",
+            "NotAllowedError"
+          )
+        );
+      };
+      window.showOpenFilePicker = session.openPickerWrapper;
+    }
+
+    const timeoutMs = Math.min(
+      Math.max(Number(options?.timeoutMs) || 3000, 100),
+      10000
+    );
+    session.timer = window.setTimeout(() => {
+      if (session.status === "pending") {
+        session.status = "expired";
+        session.error = "file_upload_input_not_captured";
+      }
+      restoreUploadHooks(session);
+    }, timeoutMs);
+    window[fileUploadSessionKey] = session;
+
+    try {
+      trigger.scrollIntoView?.({
+        block: "center",
+        inline: "center"
+      });
+      trigger.click();
+    } catch (error) {
+      session.status = "error";
+      session.error = error?.message ?? String(error);
+      restoreUploadHooks(session);
+    }
+
+    return uploadSessionResult(session);
+  }
+
+  function fileUploadStatus(token) {
+    const session = window[fileUploadSessionKey];
+
+    if (!session || session.token !== token) {
+      return {
+        status: "missing",
+        token,
+        files: [],
+        via: null,
+        error: "file_upload_session_not_found"
+      };
+    }
+
+    return uploadSessionResult(session);
+  }
+
+  function cleanupFileUpload(token) {
+    const session = window[fileUploadSessionKey];
+
+    if (!session || session.token !== token) {
+      return { cleaned: false };
+    }
+
+    if (session.status === "pending") {
+      session.status = "cancelled";
+    }
+    restoreUploadHooks(session);
+    delete window[fileUploadSessionKey];
+
+    return { cleaned: true };
+  }
+
   function canvasSnapshot(element, options) {
     if (!element || element.tagName.toLowerCase() !== "canvas") {
       throw new Error("not_a_canvas");
@@ -1247,6 +1538,14 @@ export function runPageOperation(
     return highlightGesture(params);
   }
 
+  if (method === "playwright.fileUploadStatus") {
+    return fileUploadStatus(params.token);
+  }
+
+  if (method === "playwright.fileUploadCleanup") {
+    return cleanupFileUpload(params.token);
+  }
+
   if (method === "control.show") {
     return showControlIndicator(params);
   }
@@ -1324,6 +1623,7 @@ export function runPageOperation(
     "setChecked",
     "selectOption",
     "setInputFiles",
+    "uploadFiles",
     "dropFiles"
   ]);
 
@@ -1336,8 +1636,9 @@ export function runPageOperation(
 
   switch (operation) {
     case "click":
+      const transition = navigationTransition(element);
       const navigationExpected =
-        expectsDocumentNavigation(element);
+        transition?.kind === "same-tab";
       element.scrollIntoView?.({
         block: "center",
         inline: "center"
@@ -1345,26 +1646,26 @@ export function runPageOperation(
       moveControlCursorToElement(element, params);
       highlightElement(element);
       element.click();
-      return { clicked: true, navigationExpected };
+      return {
+        clicked: true,
+        navigationExpected,
+        ...(transition ? { transition } : {})
+      };
     case "canvasSnapshot":
       return canvasSnapshot(element, params);
     case "setInputFiles": {
-      if (
-        element.tagName.toLowerCase() !== "input" ||
-        (element.getAttribute("type") ?? "").toLowerCase() !== "file"
-      ) {
-        throw new Error("element_not_file_input");
-      }
-
-      const { dataTransfer, meta } = buildFileTransfer(params.files);
-      element.files = dataTransfer.files;
-      element.dispatchEvent(
-        new window.Event("input", { bubbles: true })
+      return assignFilesToInput(
+        element,
+        buildFileTransfer(params.files),
+        "input"
       );
-      element.dispatchEvent(
-        new window.Event("change", { bubbles: true })
+    }
+    case "uploadFiles": {
+      return armFileUpload(
+        element,
+        params.files,
+        params.options || {}
       );
-      return { files: meta, via: "input" };
     }
     case "dropFiles": {
       const { dataTransfer, meta } = buildFileTransfer(params.files);

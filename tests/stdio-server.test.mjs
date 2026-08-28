@@ -46,7 +46,7 @@ test("starts from the Codex plugin manifest", async t => {
 
 test("starts the real MCP entrypoint over stdio", async t => {
   const entrypoint = process.env.MCP_ENTRYPOINT ?? fileURLToPath(new URL(
-    "../plugins/safari-browser-use/dist/server.jxa.js",
+    "../plugins/safari-browser-use/dist/safari-repl.jxa.js",
     import.meta.url
   ));
   const transport = new StdioClientTransport({
@@ -95,7 +95,7 @@ test("starts the real MCP entrypoint over stdio", async t => {
 
 test("captures output and resets persistent JXA bindings", async t => {
   const entrypoint = fileURLToPath(new URL(
-    "../plugins/safari-browser-use/dist/server.jxa.js",
+    "../plugins/safari-browser-use/dist/safari-repl.jxa.js",
     import.meta.url
   ));
   const transport = new StdioClientTransport({
@@ -143,7 +143,7 @@ test("captures output and resets persistent JXA bindings", async t => {
 
 test("returns the operating guide at runtime over stdio", async t => {
   const entrypoint = fileURLToPath(new URL(
-    "../plugins/safari-browser-use/dist/server.jxa.js",
+    "../plugins/safari-browser-use/dist/safari-repl.jxa.js",
     import.meta.url
   ));
   const transport = new StdioClientTransport({
@@ -165,6 +165,8 @@ test("returns the operating guide at runtime over stdio", async t => {
   const instructions = client.getInstructions();
   assert.match(instructions, /browser\.documentation\(\)/);
   assert.match(instructions, /untrusted content/i);
+  assert.match(instructions, /new task-owned tab/i);
+  assert.match(instructions, /explicitly asks.*reuse/i);
 
   const guide = await client.callTool({
     name: "js",

@@ -117,6 +117,15 @@ export function restoreControlAfterNavigation(options) {
   }
 
   if (navigationStarted) {
+    if (options.returnOnTimeout) {
+      return {
+        changed: true,
+        documentId: lastDocumentId,
+        pending: true,
+        restored: false
+      };
+    }
+
     throw new Error("control_indicator_restore_timeout");
   }
 

@@ -161,6 +161,74 @@ test("rejects ambiguous exact URL recovery", async () => {
   );
 });
 
+test("waits on the bound tab when duplicate URLs are open", async () => {
+  const {
+    createTabIdentity,
+    resolveTabForUrlWait
+  } = await loadTabIdentity();
+  const identity = createTabIdentity({
+    id: "63176:8",
+    title: "Product",
+    url: "https://shop.example.com/item"
+  });
+  const duplicateTabs = [
+    {
+      id: "63176:7",
+      title: "Product",
+      url: "https://shop.example.com/item"
+    },
+    {
+      id: "63176:8",
+      title: "Product",
+      url: "https://shop.example.com/item"
+    }
+  ];
+
+  assert.equal(typeof resolveTabForUrlWait, "function");
+  assert.deepEqual(
+    resolveTabForUrlWait(
+      identity,
+      duplicateTabs,
+      "shop.example.com",
+      false
+    ),
+    duplicateTabs[1]
+  );
+});
+
+test("ignores other matching URLs while the bound tab remains open", async () => {
+  const {
+    createTabIdentity,
+    resolveTabForUrlWait
+  } = await loadTabIdentity();
+  const identity = createTabIdentity({
+    id: "63176:8",
+    title: "1688 Home",
+    url: "https://www.1688.com/"
+  });
+
+  assert.equal(
+    resolveTabForUrlWait(identity, [
+      {
+        id: "63176:7",
+        title: "Search Results",
+        url: "https://s.1688.com/selloffer/offer_search.htm"
+      },
+      {
+        id: "63176:8",
+        title: "1688 Home",
+        url: "https://www.1688.com/"
+      },
+      {
+        id: "63176:9",
+        title: "Search Results",
+        url: "https://s.1688.com/selloffer/offer_search.htm"
+      }
+    ], "s.1688.com", false),
+    null
+  );
+});
+
 test("retargets an identity before an explicit navigation", async () => {
   const {
     createTabIdentity,
@@ -177,4 +245,165 @@ test("retargets an identity before an explicit navigation", async () => {
   retargetTabIdentity(identity, "https://example.com/dashboard");
 
   assert.equal(identity.url, "https://example.com/dashboard");
+});
+
+test("synchronizes an identity with Safari after navigation", async () => {
+  const {
+    completeTabNavigation,
+    createTabIdentity
+  } = await loadTabIdentity();
+  const identity = createTabIdentity({
+    id: "63176:8",
+    title: "Untitled",
+    url: "about:blank"
+  });
+
+  assert.equal(typeof completeTabNavigation, "function");
+
+  completeTabNavigation(identity, {
+    id: "63176:8",
+    title: "Apple",
+    url: "https://www.apple.com/"
+  });
+
+  assert.deepEqual(identity, {
+    id: "63176:8",
+    title: "Apple",
+    url: "https://www.apple.com/",
+    windowId: "63176"
+  });
+});
+
+test("synchronizes navigation after the tab index changes", async () => {
+  const {
+    completeTabNavigation,
+    createTabIdentity,
+    retargetTabIdentity
+  } = await loadTabIdentity();
+  const identity = createTabIdentity({
+    id: "63176:8",
+    title: "Untitled",
+    url: "about:blank"
+  });
+
+  retargetTabIdentity(identity, "https://example.com/dashboard");
+  completeTabNavigation(identity, {
+    id: "63176:7",
+    title: "Dashboard",
+    url: "https://example.com/dashboard"
+  });
+
+  assert.deepEqual(identity, {
+    id: "63176:7",
+    title: "Dashboard",
+    url: "https://example.com/dashboard",
+    windowId: "63176"
+  });
+});
+
+test("rejects an index change to an unexpected navigation target", async () => {
+  const {
+    completeTabNavigation,
+    createTabIdentity,
+    retargetTabIdentity
+  } = await loadTabIdentity();
+  const identity = createTabIdentity({
+    id: "63176:8",
+    title: "Untitled",
+    url: "about:blank"
+  });
+
+  retargetTabIdentity(identity, "https://example.com/dashboard");
+
+  assert.throws(
+    () => completeTabNavigation(identity, {
+      id: "63176:7",
+      title: "Unrelated",
+      url: "https://example.com/unrelated"
+    }),
+    /stale_tab_handle/
+  );
+});
+
+test("finds a newly opened tab even when later tab indexes shift", async () => {
+  const { findOpenedTabs } = await loadTabIdentity();
+  const before = [
+    {
+      id: "63176:7",
+      title: "Home",
+      url: "https://example.com/"
+    },
+    {
+      id: "63176:8",
+      title: "Search",
+      url: "https://shop.example.com/"
+    }
+  ];
+  const after = [
+    {
+      id: "63176:7",
+      title: "Home",
+      url: "https://example.com/"
+    },
+    {
+      id: "63176:8",
+      title: "Verification",
+      url: "https://verify.example.com/challenge"
+    },
+    {
+      id: "63176:9",
+      title: "Search",
+      url: "https://shop.example.com/"
+    }
+  ];
+
+  assert.deepEqual(findOpenedTabs(before, after), [after[1]]);
+});
+
+test("does not mistake a same-tab navigation for an opened tab", async () => {
+  const { findOpenedTabs } = await loadTabIdentity();
+  const before = [{
+    id: "63176:8",
+    title: "Search",
+    url: "https://example.com/search"
+  }];
+  const after = [{
+    id: "63176:8",
+    title: "Results",
+    url: "https://example.com/results"
+  }];
+
+  assert.deepEqual(findOpenedTabs(before, after), []);
+});
+
+test("rechecks once for a delayed JavaScript popup", async () => {
+  const { findOpenedTabsAfterDelay } = await loadTabIdentity();
+  const before = [{
+    id: "63176:8",
+    title: "Search",
+    url: "https://example.com/search"
+  }];
+  const after = [
+    before[0],
+    {
+      id: "63176:9",
+      title: "Results",
+      url: "https://example.com/results"
+    }
+  ];
+  const delays = [];
+
+  assert.equal(typeof findOpenedTabsAfterDelay, "function");
+  assert.deepEqual(
+    findOpenedTabsAfterDelay(before, {
+      delayMs: 800,
+      listTabs: () => after,
+      sleep: milliseconds => delays.push(milliseconds)
+    }),
+    {
+      openedTabs: [after[1]],
+      tabs: after
+    }
+  );
+  assert.deepEqual(delays, [800]);
 });
