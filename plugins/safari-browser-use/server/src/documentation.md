@@ -55,9 +55,31 @@ reload, or inspect a user-owned tab unless the user explicitly asks you to use
 that current or specific existing tab.
 
 ```js
-var tab = browser.tabs.new()
+var tab = browser.tabs.new({ active: false })
 tab.goto("https://example.com")
 ```
+
+`browser.tabs.new()` opens in the current Safari window without activation by
+default. The selected tab remains unchanged while the task tab is created,
+navigated, inspected, and operated through page JavaScript. Pass
+`{ active: true }` only when the user explicitly asks to see the task tab now.
+
+Safari's Apple Events API does not expose inactive Tab Groups. A background task
+tab therefore belongs to the Tab Group currently open in its Safari window. If
+the user switches that window to another Tab Group and the task tab can no longer
+be resolved safely, stop instead of selecting a group or falling back to another
+tab. An optional `windowId` can target a known Safari window without changing
+this rule:
+
+```js
+var tab = browser.tabs.new({
+  windowId: knownWindowId,
+  active: false
+})
+```
+
+An explicit `windowId` targets only that Safari window. If it no longer exists,
+the call fails and does not fall back to the user's current window.
 
 When one task intentionally operates on different websites, use separate
 task-owned tabs, one for each site. Within the same website, continue navigating
@@ -105,9 +127,18 @@ browser.release()
 Session reset and runtime shutdown also release control, and a 60-second
 inactivity lease removes a stale indicator if the session ends unexpectedly.
 
-Do not close tabs by default. Only close a tab you created for this task and no
-longer need, by its own tab binding. Never close, reload, or reorder tabs the
-user was already using, and never close tabs by matching their URL or title.
+Close a task-owned background tab by default when its task finishes or is
+cancelled:
+
+```js
+tab.close()
+```
+
+Keep it only when the user needs to view or inspect the result. Keeping a task
+tab means leaving it open in the background; do not select, pin, or reorder it.
+`tab.close()` refuses to close the selected tab, so cleanup cannot replace the
+page the user is currently viewing. Never close a user-owned tab, and never close
+tabs by matching their URL or title.
 
 ## Browser Control Interruption
 
@@ -321,7 +352,7 @@ supported surface; do not call methods that are not listed here.
 | `browser.tabs.list()` | List open Safari tabs |
 | `browser.tabs.selected()` | Return the selected `Tab` |
 | `browser.tabs.get(id)` | Return a tab by ID |
-| `browser.tabs.new()` | Open and return a blank tab |
+| `browser.tabs.new(options?)` | Open a blank background tab; pass `{ active: true }` only for explicit foreground use, or `windowId` for a known window |
 
 ### Google Accounts
 
@@ -392,7 +423,7 @@ clipboard formats afterward. Always close a connected editor with
 | `tab.title()` | Read the current title |
 | `tab.url()` | Read the current URL |
 | `tab.goto(url)` | Navigate to an HTTP or HTTPS URL |
-| `tab.close()` | Close the tab |
+| `tab.close()` | Close the tab unless it is currently selected |
 | `tab.playwright.domSnapshot()` | Read a semantic DOM snapshot |
 | `tab.playwright.canvasSnapshot(selector, options?)` | Capture one `<canvas>` as an image the model can see |
 | `tab.playwright.scrollBy(deltaX, deltaY)` | Scroll the page by explicit pixel offsets |

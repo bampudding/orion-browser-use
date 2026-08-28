@@ -1,0 +1,20 @@
+{
+  "name": "vibevibe-labs",
+  "owner": {
+    "name": "VibeVibe Labs",
+    "url": "https://github.com/vibevibe-labs"
+  },
+  "plugins": [
+    {
+      "name": "safari-browser-use",
+      "source": "./",
+      "category": "Developer Tools",
+      "tags": [
+        "safari",
+        "browser",
+        "automation"
+      ],
+      "strict": true
+    }
+  ]
+}

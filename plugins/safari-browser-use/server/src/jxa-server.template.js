@@ -184,20 +184,64 @@ var run = (function (globalObject) {
     throw new Error("Safari tab not found: " + tabId);
   }
 
-  function openTab() {
+  function closeTab(tabId) {
+    var target = findTab(tabId);
+    var selectedTab = target.window.currentTab();
+
+    if (Number(selectedTab.index()) === target.tabIndex) {
+      throw new Error(
+        "Refusing to close the selected Safari tab."
+      );
+    }
+
+    target.tab.close();
+  }
+
+  function openTab(options) {
+    options = options || {};
     var windows = safari.windows();
+    var requestedWindowId = options.windowId;
+    var hasRequestedWindow =
+      requestedWindowId !== undefined && requestedWindowId !== null;
 
     if (windows.length === 0) {
+      if (hasRequestedWindow) {
+        throw new Error(
+          "Safari window not found: " + requestedWindowId
+        );
+      }
+
       safari.Document().make();
       windows = safari.windows();
     }
 
     var window = windows[0];
+
+    if (hasRequestedWindow) {
+      window = null;
+
+      for (var index = 0; index < windows.length; index++) {
+        if (Number(windows[index].id()) === Number(requestedWindowId)) {
+          window = windows[index];
+          break;
+        }
+      }
+
+      if (window === null) {
+        throw new Error(
+          "Safari window not found: " + requestedWindowId
+        );
+      }
+    }
+
     var tab = safari.Tab({ url: "about:blank" });
     window.tabs.push(tab);
-    window.currentTab = tab;
 
-    return currentTabMetadata();
+    if (options.active === true) {
+      window.currentTab = tab;
+    }
+
+    return tabMetadata(window, tab, Number(tab.index()));
   }
 
   function readBackgroundPageSource(url) {
@@ -931,11 +975,11 @@ var run = (function (globalObject) {
     }
 
     if (method === "tabs.open") {
-      return openTab();
+      return openTab(params);
     }
 
     if (method === "tabs.close") {
-      findTab(params.tabId).tab.close();
+      closeTab(params.tabId);
       return null;
     }
 
@@ -1732,8 +1776,12 @@ var run = (function (globalObject) {
 
         throw new Error("Safari tab not found: " + id);
       },
-      new: function () {
-        return wrapTab(callSafari("tabs.open", {}));
+      new: function (options) {
+        options = options || {};
+        return wrapTab(callSafari("tabs.open", {
+          windowId: options.windowId,
+          active: options.active === true
+        }));
       }
     })
   });
