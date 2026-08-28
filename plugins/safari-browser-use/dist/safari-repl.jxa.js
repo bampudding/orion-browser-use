@@ -2962,6 +2962,19 @@ function findOpenedTabs(before, after) {
   return candidates.length === openedCount ? candidates : [];
 }
 
+function findOpenedTabsAfterDelay(
+  before,
+  { delayMs = 800, listTabs, sleep }
+) {
+  sleep(delayMs);
+  const tabs = listTabs();
+
+  return {
+    openedTabs: findOpenedTabs(before, tabs),
+    tabs
+  };
+}
+
 function createTabIdentity(metadata) {
   return {
     id: String(metadata.id),
@@ -4066,6 +4079,28 @@ var run = (function (globalObject) {
             operationTabsAfter
           )
         : [];
+
+      if (
+        method === "playwright.locator.click" &&
+        openedTabs.length === 0 &&
+        !transition
+      ) {
+        var delayedTabs = findOpenedTabsAfterDelay(
+          operationTabsBefore,
+          {
+            delayMs: 800,
+            listTabs: listTabs,
+            sleep: function (milliseconds) {
+              foundation.NSThread.sleepForTimeInterval(
+                milliseconds / 1000
+              );
+            }
+          }
+        );
+        operationTabsAfter = delayedTabs.tabs;
+        openedTabs = delayedTabs.openedTabs;
+      }
+
       var navigationExpected = Boolean(
         operationResult &&
         operationResult.navigationExpected

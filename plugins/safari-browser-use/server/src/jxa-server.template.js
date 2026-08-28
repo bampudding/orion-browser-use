@@ -1023,6 +1023,28 @@ var run = (function (globalObject) {
             operationTabsAfter
           )
         : [];
+
+      if (
+        method === "playwright.locator.click" &&
+        openedTabs.length === 0 &&
+        !transition
+      ) {
+        var delayedTabs = findOpenedTabsAfterDelay(
+          operationTabsBefore,
+          {
+            delayMs: 800,
+            listTabs: listTabs,
+            sleep: function (milliseconds) {
+              foundation.NSThread.sleepForTimeInterval(
+                milliseconds / 1000
+              );
+            }
+          }
+        );
+        operationTabsAfter = delayedTabs.tabs;
+        openedTabs = delayedTabs.openedTabs;
+      }
+
       var navigationExpected = Boolean(
         operationResult &&
         operationResult.navigationExpected

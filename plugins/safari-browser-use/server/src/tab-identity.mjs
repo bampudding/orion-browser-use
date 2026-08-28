@@ -60,6 +60,19 @@ export function findOpenedTabs(before, after) {
   return candidates.length === openedCount ? candidates : [];
 }
 
+export function findOpenedTabsAfterDelay(
+  before,
+  { delayMs = 800, listTabs, sleep }
+) {
+  sleep(delayMs);
+  const tabs = listTabs();
+
+  return {
+    openedTabs: findOpenedTabs(before, tabs),
+    tabs
+  };
+}
+
 export function createTabIdentity(metadata) {
   return {
     id: String(metadata.id),

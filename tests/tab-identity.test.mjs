@@ -375,3 +375,35 @@ test("does not mistake a same-tab navigation for an opened tab", async () => {
 
   assert.deepEqual(findOpenedTabs(before, after), []);
 });
+
+test("rechecks once for a delayed JavaScript popup", async () => {
+  const { findOpenedTabsAfterDelay } = await loadTabIdentity();
+  const before = [{
+    id: "63176:8",
+    title: "Search",
+    url: "https://example.com/search"
+  }];
+  const after = [
+    before[0],
+    {
+      id: "63176:9",
+      title: "Results",
+      url: "https://example.com/results"
+    }
+  ];
+  const delays = [];
+
+  assert.equal(typeof findOpenedTabsAfterDelay, "function");
+  assert.deepEqual(
+    findOpenedTabsAfterDelay(before, {
+      delayMs: 800,
+      listTabs: () => after,
+      sleep: milliseconds => delays.push(milliseconds)
+    }),
+    {
+      openedTabs: [after[1]],
+      tabs: after
+    }
+  );
+  assert.deepEqual(delays, [800]);
+});
