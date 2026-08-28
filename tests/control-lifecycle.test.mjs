@@ -188,3 +188,38 @@ test("restores an indicator removed from the current document", async () => {
   });
   assert.equal(restores, 1);
 });
+
+test("returns a pending transition instead of misreporting a slow navigation", async () => {
+  const lifecycle = await import(lifecycleModule);
+  const restoreAfterNavigation =
+    lifecycle.restoreControlAfterNavigation;
+  let clock = 0;
+
+  const result = restoreAfterNavigation({
+    initialDocumentId: "document-1",
+    initialUrl: "https://example.com/start",
+    inspect() {
+      return {
+        controlVisible: false,
+        documentId: "document-1",
+        readyState: "complete",
+        tabUrl: "https://example.com/slow",
+        url: "https://example.com/start"
+      };
+    },
+    now: () => clock,
+    restore() {},
+    returnOnTimeout: true,
+    sleep(milliseconds) {
+      clock += milliseconds;
+    },
+    timeoutMs: 100
+  });
+
+  assert.deepEqual(result, {
+    changed: true,
+    documentId: "document-1",
+    pending: true,
+    restored: false
+  });
+});

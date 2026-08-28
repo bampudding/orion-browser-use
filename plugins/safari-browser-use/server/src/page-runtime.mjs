@@ -168,61 +168,101 @@ export function runPageOperation(
     return window[documentIdKey];
   }
 
-  function expectsDocumentNavigation(element) {
+  function navigationTransition(element) {
     const anchor = element.closest?.("a[href]");
 
     if (anchor) {
       const target =
         (anchor.getAttribute("target") || "_self").toLowerCase();
-
-      if (
-        anchor.hasAttribute("download") ||
-        (target !== "_self" && target !== "")
-      ) {
-        return false;
-      }
+      let destination;
 
       try {
-        const current = new URL(window.location.href);
-        const destination = new URL(anchor.href, current);
-        const withoutHash = value =>
-          `${value.origin}${value.pathname}${value.search}`;
-
-        return (
-          (destination.protocol === "http:" ||
-            destination.protocol === "https:") &&
-          (
-            destination.href === current.href ||
-            withoutHash(destination) !== withoutHash(current)
-          )
-        );
+        destination = new URL(anchor.href, window.location.href);
       } catch (error) {
-        return false;
+        return null;
       }
+
+      if (anchor.hasAttribute("download")) {
+        const transition = {
+          kind: "download",
+          url: destination.href
+        };
+        const suggestedFilename = anchor.getAttribute("download");
+
+        if (suggestedFilename) {
+          transition.suggestedFilename = suggestedFilename;
+        }
+
+        return transition;
+      }
+
+      if (target !== "_self" && target !== "") {
+        return {
+          kind: "new-tab",
+          url: destination.href
+        };
+      }
+
+      const current = new URL(window.location.href);
+      const withoutHash = value =>
+        `${value.origin}${value.pathname}${value.search}`;
+
+      return (
+        (destination.protocol === "http:" ||
+          destination.protocol === "https:") &&
+        (
+          destination.href === current.href ||
+          withoutHash(destination) !== withoutHash(current)
+        )
+      )
+        ? { kind: "same-tab", url: destination.href }
+        : null;
     }
 
     const form = element.form;
 
     if (!form) {
-      return false;
+      return null;
     }
 
     const target =
-      (form.getAttribute("target") || "_self").toLowerCase();
+      (
+        element.getAttribute("formtarget") ||
+        form.getAttribute("target") ||
+        "_self"
+      ).toLowerCase();
     const tagName = element.tagName.toLowerCase();
     const type = (
       element.getAttribute("type") ||
       (tagName === "button" ? "submit" : "")
     ).toLowerCase();
+    const submitsForm =
+      tagName === "button" && type === "submit" ||
+      tagName === "input" &&
+        (type === "submit" || type === "image");
 
-    return (
-      (target === "_self" || target === "") &&
-      (
-        tagName === "button" && type === "submit" ||
-        tagName === "input" &&
-          (type === "submit" || type === "image")
-      )
-    );
+    if (!submitsForm) {
+      return null;
+    }
+
+    const action =
+      element.getAttribute("formaction") ||
+      form.getAttribute("action") ||
+      window.location.href;
+    let destination;
+
+    try {
+      destination = new URL(action, window.location.href).href;
+    } catch (error) {
+      return null;
+    }
+
+    return {
+      kind: target === "_self" || target === ""
+        ? "same-tab"
+        : "new-tab",
+      url: destination
+    };
   }
 
   function controlCursorElement() {
@@ -1596,8 +1636,9 @@ export function runPageOperation(
 
   switch (operation) {
     case "click":
+      const transition = navigationTransition(element);
       const navigationExpected =
-        expectsDocumentNavigation(element);
+        transition?.kind === "same-tab";
       element.scrollIntoView?.({
         block: "center",
         inline: "center"
@@ -1605,7 +1646,11 @@ export function runPageOperation(
       moveControlCursorToElement(element, params);
       highlightElement(element);
       element.click();
-      return { clicked: true, navigationExpected };
+      return {
+        clicked: true,
+        navigationExpected,
+        ...(transition ? { transition } : {})
+      };
     case "canvasSnapshot":
       return canvasSnapshot(element, params);
     case "setInputFiles": {

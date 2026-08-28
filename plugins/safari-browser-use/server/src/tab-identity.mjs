@@ -39,6 +39,27 @@ export function collectTabs(
   return result;
 }
 
+function tabFingerprint(tab) {
+  return `${String(tab.title || "")}\u0000${String(tab.url || "")}`;
+}
+
+export function findOpenedTabs(before, after) {
+  const openedCount = after.length - before.length;
+
+  if (openedCount <= 0) {
+    return [];
+  }
+
+  const previousFingerprints = new Set(
+    before.map(tabFingerprint)
+  );
+  const candidates = after.filter(tab =>
+    !previousFingerprints.has(tabFingerprint(tab))
+  );
+
+  return candidates.length === openedCount ? candidates : [];
+}
+
 export function createTabIdentity(metadata) {
   return {
     id: String(metadata.id),
@@ -62,9 +83,13 @@ function updateTabIdentity(identity, metadata) {
 }
 
 export function completeTabNavigation(identity, metadata) {
+  const targetChanged = String(metadata.id) !== identity.id;
+  const expectedTarget =
+    String(metadata.url || "") === identity.url;
+
   if (
-    String(metadata.id) !== identity.id ||
-    tabWindowId(metadata.id) !== identity.windowId
+    tabWindowId(metadata.id) !== identity.windowId ||
+    targetChanged && !expectedTarget
   ) {
     throw new Error(
       "stale_tab_handle: navigation target changed " + identity.id

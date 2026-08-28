@@ -576,10 +576,101 @@ test("marks same-tab link clicks as navigation-capable", () => {
 
   assert.deepEqual(result, {
     clicked: true,
-    navigationExpected: true
+    navigationExpected: true,
+    transition: {
+      kind: "same-tab",
+      url: "https://example.com/next"
+    }
   });
 
   execute("control.hide");
+});
+
+test("describes a form submission as a same-tab transition", () => {
+  const { execute, window } = createPage(`
+    <form action="/search">
+      <button type="submit">Search</button>
+    </form>
+  `);
+  const form = window.document.querySelector("form");
+  form.addEventListener("submit", event => event.preventDefault());
+
+  assert.deepEqual(
+    execute("playwright.locator.click", {
+      locator: [{
+        type: "role",
+        role: "button",
+        name: "Search",
+        exact: true
+      }],
+      options: {}
+    }),
+    {
+      clicked: true,
+      navigationExpected: true,
+      transition: {
+        kind: "same-tab",
+        url: "https://example.com/search"
+      }
+    }
+  );
+});
+
+test("describes a target-blank click as a new-tab transition", () => {
+  const { execute, window } = createPage(`
+    <a href="/details" target="_blank">Open details</a>
+  `);
+  const link = window.document.querySelector("a");
+  link.addEventListener("click", event => event.preventDefault());
+
+  assert.deepEqual(
+    execute("playwright.locator.click", {
+      locator: [{
+        type: "role",
+        role: "link",
+        name: "Open details",
+        exact: true
+      }],
+      options: {}
+    }),
+    {
+      clicked: true,
+      navigationExpected: false,
+      transition: {
+        kind: "new-tab",
+        url: "https://example.com/details"
+      }
+    }
+  );
+});
+
+test("describes a download click without claiming completion", () => {
+  const { execute, window } = createPage(`
+    <a href="/report.csv" download="sales.csv">Download report</a>
+  `);
+  const link = window.document.querySelector("a");
+  link.addEventListener("click", event => event.preventDefault());
+
+  assert.deepEqual(
+    execute("playwright.locator.click", {
+      locator: [{
+        type: "role",
+        role: "link",
+        name: "Download report",
+        exact: true
+      }],
+      options: {}
+    }),
+    {
+      clicked: true,
+      navigationExpected: false,
+      transition: {
+        kind: "download",
+        suggestedFilename: "sales.csv",
+        url: "https://example.com/report.csv"
+      }
+    }
+  );
 });
 
 test("shows one non-interactive AI control indicator", () => {

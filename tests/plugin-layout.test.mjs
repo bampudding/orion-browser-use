@@ -20,12 +20,18 @@ test("all client manifests expose the shared skill and native MCP config", async
     ["plugin.json", "./copilot.mcp.json"],
     [".cursor-plugin/plugin.json", "./cursor.mcp.json"]
   ];
+  let sharedVersion;
 
   for (const [path, mcpServers] of manifests) {
     const manifest = await readJson(path);
 
     assert.equal(manifest.name, "safari-browser-use");
-    assert.equal(manifest.version, "0.1.1");
+    assert.match(
+      manifest.version,
+      /^0\.1\.1(?:\+codex\.[A-Za-z0-9.-]+)?$/
+    );
+    sharedVersion ??= manifest.version;
+    assert.equal(manifest.version, sharedVersion);
     assert.equal(manifest.skills, "./skills/");
     assert.equal(manifest.mcpServers, mcpServers);
   }

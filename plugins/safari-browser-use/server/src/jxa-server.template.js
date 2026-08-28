@@ -666,6 +666,7 @@ var run = (function (globalObject) {
           milliseconds / 1000
         );
       },
+      returnOnTimeout: options.returnOnTimeout,
       timeoutMs: options.timeoutMs
     });
   }
@@ -687,10 +688,62 @@ var run = (function (globalObject) {
       return;
     }
 
-    restoreControlForNavigation(tabId, initialState, {
+    return restoreControlForNavigation(tabId, initialState, {
       changeTimeoutMs: navigationExpected ? 1000 : 250,
+      returnOnTimeout: true,
       timeoutMs: 10000
     });
+  }
+
+  function tabMetadataForId(tabId) {
+    var target = findTab(tabId);
+
+    return tabMetadata(
+      target.window,
+      target.tab,
+      target.tabIndex
+    );
+  }
+
+  function synchronizeActionTab(identity, tabId) {
+    var metadata = tabMetadataForId(tabId);
+
+    if (
+      metadata.id !== identity.id ||
+      metadata.url !== identity.url
+    ) {
+      completeTabNavigation(identity, metadata);
+    }
+
+    return metadata;
+  }
+
+  function completeNewTabTransition(
+    identity,
+    transition,
+    tabs,
+    openedTabs
+  ) {
+    var source = resolveTabIdentity(identity, tabs);
+    var matches = openedTabs;
+
+    if (matches.length === 0 && transition.url) {
+      matches = tabs.filter(function (tab) {
+        return (
+          tab.id !== source.id &&
+          tabWindowId(tab.id) === identity.windowId &&
+          String(tab.url || "") === transition.url
+        );
+      });
+    }
+
+    if (matches.length === 1) {
+      transition.tab = matches[0];
+    } else if (matches.length > 1) {
+      transition.tabs = matches;
+    }
+
+    controlLifecycle.activate(source.id);
   }
 
   function waitFor(params) {
@@ -862,6 +915,7 @@ var run = (function (globalObject) {
   function callSafari(method, params) {
     ensureSafari26();
     params = params || {};
+    var resolvedTabs = null;
 
     if (method === "playwright.waitForURL") {
       return waitForURL(params);
@@ -872,7 +926,8 @@ var run = (function (globalObject) {
     }
 
     if (params.tabIdentity) {
-      resolveTabIdentity(params.tabIdentity, listTabs());
+      resolvedTabs = listTabs();
+      resolveTabIdentity(params.tabIdentity, resolvedTabs);
       params.tabId = params.tabIdentity.id;
     }
 
@@ -907,19 +962,21 @@ var run = (function (globalObject) {
       var initialState = inspectControlledDocument(params.tabId);
       findTab(params.tabId).tab.url = url;
       retargetTabIdentity(params.tabIdentity, url);
+
+      try {
+        params.tabId = resolveTabIdentity(
+          params.tabIdentity,
+          listTabs()
+        ).id;
+      } catch (error) {
+        // The destination may already be redirecting.
+      }
+
       restoreControlForNavigation(params.tabId, initialState, {
         changeTimeoutMs: 10000,
         timeoutMs: 10000
       });
-      var navigationTarget = findTab(params.tabId);
-      completeTabNavigation(
-        params.tabIdentity,
-        tabMetadata(
-          navigationTarget.window,
-          navigationTarget.tab,
-          navigationTarget.tabIndex
-        )
-      );
+      synchronizeActionTab(params.tabIdentity, params.tabId);
       return null;
     }
 
@@ -964,7 +1021,21 @@ var run = (function (globalObject) {
       var operationState = mayNavigate
         ? navigationInitialState(params.tabId)
         : null;
+      var operationTabsBefore = mayNavigate
+        ? resolvedTabs
+        : null;
       var operationResult = runPage(method, params);
+      var transition = operationResult &&
+        operationResult.transition;
+      var operationTabsAfter = mayNavigate
+        ? listTabs()
+        : null;
+      var openedTabs = mayNavigate
+        ? findOpenedTabs(
+            operationTabsBefore,
+            operationTabsAfter
+          )
+        : [];
       var navigationExpected = Boolean(
         operationResult &&
         operationResult.navigationExpected
@@ -981,11 +1052,59 @@ var run = (function (globalObject) {
       }
 
       if (mayNavigate) {
-        restoreAfterPossibleNavigation(
-          params.tabId,
-          operationState,
-          navigationExpected
-        );
+        if (openedTabs.length > 0) {
+          if (!transition || transition.kind !== "new-tab") {
+            var declaredTransition = transition;
+            transition = { kind: "new-tab" };
+
+            if (declaredTransition && declaredTransition.url) {
+              transition.requestedUrl = declaredTransition.url;
+            }
+
+            if (openedTabs.length === 1) {
+              transition.url = openedTabs[0].url;
+            }
+
+            operationResult.transition = transition;
+          }
+
+          completeNewTabTransition(
+            params.tabIdentity,
+            transition,
+            operationTabsAfter,
+            openedTabs
+          );
+        } else if (transition && transition.kind === "new-tab") {
+          completeNewTabTransition(
+            params.tabIdentity,
+            transition,
+            operationTabsAfter,
+            openedTabs
+          );
+        } else if (transition && transition.kind === "download") {
+          var downloadSource = resolveTabIdentity(
+            params.tabIdentity,
+            listTabs()
+          );
+          controlLifecycle.activate(downloadSource.id);
+        } else {
+          var restoration = restoreAfterPossibleNavigation(
+            params.tabId,
+            operationState,
+            navigationExpected
+          );
+
+          if (navigationExpected) {
+            synchronizeActionTab(
+              params.tabIdentity,
+              params.tabId
+            );
+
+            if (restoration && restoration.pending) {
+              transition.pending = true;
+            }
+          }
+        }
       }
 
       return operationResult;

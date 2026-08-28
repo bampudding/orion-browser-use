@@ -48,9 +48,11 @@ test("builds a self-contained JXA MCP server", async t => {
   assert.match(bundle, /playwright\.fileUploadStatus/);
   assert.match(bundle, /function resolveTabIdentity/);
   assert.match(bundle, /completeTabNavigation/);
+  assert.match(bundle, /function findOpenedTabs/);
+  assert.match(bundle, /resolvedTabs = listTabs\(\)/);
   assert.match(
     bundle,
-    /resolveTabIdentity\(params\.tabIdentity, listTabs\(\)\)/
+    /resolveTabIdentity\(params\.tabIdentity, resolvedTabs\)/
   );
   assert.match(
     bundle,

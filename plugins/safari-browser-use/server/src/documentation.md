@@ -470,6 +470,16 @@ var buy = card.getByRole("button", { name: "Buy", exact: true })
 `click`, `fill`, `type`, `press`, and single-element reads use strict mode and
 throw when the locator resolves to zero or multiple elements.
 
+`click()` reports observable browser transitions. A same-tab link or form returns
+`transition.kind: "same-tab"`; a newly opened tab — including one opened by page
+JavaScript — returns `"new-tab"` and includes `transition.tab` when it can be
+identified uniquely (or `transition.tabs` when several distinct tabs opened); a
+download link returns `"download"` with its URL and suggested filename. When a
+slow same-tab navigation exceeds the indicator restoration window, the click
+remains successful and returns `transition.pending: true`; call `waitForURL()`
+and `waitForLoadState()` to finish the observable wait instead of retrying the
+click.
+
 `press()` dispatches synthetic page events, not trusted Safari keyboard input.
 Keys that depend on browser-default behavior — Tab, PageDown, PageUp, Home, End,
 and Space — are rejected. Use `scrollBy()` or `scrollIntoView()` for scrolling and
@@ -550,9 +560,12 @@ the upload control; report that the site requires a native file chooser.
 `input` and `change`; `dropFiles()` dispatches `dragenter`, `dragover`, and `drop`
 carrying the files. Both return `{ files: [{ name, size, type }], via }`.
 
-File **downloads** need no special API: locate the download control and `click()`
-it. Safari saves the file to the user's Downloads folder using its normal download
-flow.
+For file **downloads**, locate the download control and `click()` it. The result
+identifies a DOM-declared download with `transition.kind: "download"`, its URL,
+and any suggested filename. This confirms that the click was dispatched, not
+that Safari finished the download. Safari controls the destination and completion
+state through its normal download flow; the Apple Events API does not expose a
+reliable final local path.
 
 ### Unsupported Operations
 
