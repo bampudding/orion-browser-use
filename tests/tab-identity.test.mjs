@@ -196,6 +196,39 @@ test("waits on the bound tab when duplicate URLs are open", async () => {
   );
 });
 
+test("ignores other matching URLs while the bound tab remains open", async () => {
+  const {
+    createTabIdentity,
+    resolveTabForUrlWait
+  } = await loadTabIdentity();
+  const identity = createTabIdentity({
+    id: "63176:8",
+    title: "1688 Home",
+    url: "https://www.1688.com/"
+  });
+
+  assert.equal(
+    resolveTabForUrlWait(identity, [
+      {
+        id: "63176:7",
+        title: "Search Results",
+        url: "https://s.1688.com/selloffer/offer_search.htm"
+      },
+      {
+        id: "63176:8",
+        title: "1688 Home",
+        url: "https://www.1688.com/"
+      },
+      {
+        id: "63176:9",
+        title: "Search Results",
+        url: "https://s.1688.com/selloffer/offer_search.htm"
+      }
+    ], "s.1688.com", false),
+    null
+  );
+});
+
 test("retargets an identity before an explicit navigation", async () => {
   const {
     createTabIdentity,

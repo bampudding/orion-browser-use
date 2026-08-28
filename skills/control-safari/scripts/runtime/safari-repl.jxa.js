@@ -3039,12 +3039,16 @@ function resolveTabForUrlWait(
 
     return exact ? url === expected : url.includes(expected);
   };
-  const indexed = tabs.find(tab =>
-    tab.id === identity.id && matches(tab)
-  );
+  let bound = null;
 
-  if (indexed) {
-    return updateTabIdentity(identity, indexed);
+  try {
+    bound = resolveTabIdentity(identity, tabs);
+  } catch (error) {
+    // The bound tab may be navigating to the expected URL.
+  }
+
+  if (bound) {
+    return matches(bound) ? bound : null;
   }
 
   const candidates = tabs.filter(tab =>
