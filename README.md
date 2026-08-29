@@ -15,9 +15,9 @@
 ## Overview
 
 Safari Browser Use gives **AI agents such as Codex, Claude Code, GitHub Copilot,
-and Cursor** safe, visible control of the Safari tabs you already have open. It
-preserves your current sessions and logins while exposing a synchronous
-JavaScript REPL and a Playwright-style browser API.
+Cursor, Kiro, CodeBuddy, WorkBuddy, and Qoder** safe, visible control of the
+Safari tabs you already have open. It preserves your current sessions and logins
+while exposing a synchronous JavaScript REPL and a Playwright-style browser API.
 
 It connects through the Apple Events support built into macOS.
 Plugin mode does not require Node.js, npm, a Safari extension, a companion app,
@@ -42,13 +42,20 @@ runtime available to the agent to preserve its script session between calls.
 
 ## Installation
 
-### 1. Plugin — one-line prompt
+### 1. Plugin — one-line prompt with client routing
 
-Paste this prompt into Codex, Claude Code, GitHub Copilot CLI, or Cursor:
+Paste this one-line prompt into a supported agent. It names the concrete route
+for each client, so the agent must not assume that every client has the same
+plugin installer:
 
 ```text
-Install the Safari Browser Use plugin from https://github.com/vibevibe-labs/safari-browser-use using the current client's plugin installer. Stop after installation, then tell me whether to reload plugins or start a new session and give me one example request.
+Install Safari Browser Use from https://github.com/vibevibe-labs/safari-browser-use using the current client's plugin installer when supported: use `codex plugin marketplace add` then `codex plugin add` for Codex, `claude plugin marketplace add` then `claude plugin install` for Claude Code, `copilot plugin install vibevibe-labs/safari-browser-use:plugins/safari-browser-use` for GitHub Copilot CLI, `codebuddy plugin marketplace add` then `codebuddy plugin install` for CodeBuddy or WorkBuddy, `qoder plugins marketplace add` then `qoder plugins install safari-browser-use` for Qoder, import this GitHub repository as an Agent Plugin/Power through Kiro's Add Custom Power flow for Kiro, and use the documented local checkout for Cursor; verify the result instead of claiming success. Stop after installation, then tell me whether to reload plugins or start a new session and give me one example request.
 ```
+
+This is one routing prompt, not one universal shell command. Kiro requires a
+user-visible Power import, and Cursor currently uses the local checkout below;
+the agent must report those steps rather than claim that a background install
+already happened.
 
 ### 2. Skill — one-line command
 
@@ -96,6 +103,42 @@ copilot plugin install vibevibe-labs/safari-browser-use:plugins/safari-browser-u
 ```
 
 Start a new Copilot CLI session after installation.
+
+</details>
+
+<details>
+<summary><strong>CodeBuddy / WorkBuddy</strong></summary>
+
+```sh
+codebuddy plugin marketplace add vibevibe-labs/safari-browser-use
+codebuddy plugin install safari-browser-use@vibevibe-labs
+```
+
+Run `/reload-plugins` after installation.
+
+</details>
+
+<details>
+<summary><strong>Qoder</strong></summary>
+
+```sh
+qoder plugins marketplace add vibevibe-labs/safari-browser-use
+qoder plugins install safari-browser-use
+```
+
+Run `/plugins reload` or start a new Qoder CLI session after installation.
+
+</details>
+
+<details>
+<summary><strong>Kiro</strong></summary>
+
+Kiro loads the root Agent Plugins package as a Power. In **Kiro → Powers → Add
+Custom Power**, choose **Import power from GitHub** and enter:
+
+```text
+https://github.com/vibevibe-labs/safari-browser-use
+```
 
 </details>
 
