@@ -236,17 +236,3 @@ more projects from [VibeVibe Labs](https://github.com/vibevibe-labs).
 ## License
 
 Safari Browser Use is available under the [MIT License](LICENSE).
-
-## Star History
-
-<div align="center">
-
-<a href="https://www.star-history.com/#vibevibe-labs/safari-browser-use&Date">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=vibevibe-labs/safari-browser-use&type=Date&theme=dark" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=vibevibe-labs/safari-browser-use&type=Date" />
-    <img alt="Safari Browser Use star history chart" src="https://api.star-history.com/svg?repos=vibevibe-labs/safari-browser-use&type=Date" />
-  </picture>
-</a>
-
-</div>
