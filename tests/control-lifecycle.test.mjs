@@ -106,7 +106,8 @@ test("restores control before a navigation operation returns", async () => {
   assert.deepEqual(result, {
     changed: true,
     documentId: "document-2",
-    restored: true
+    restored: true,
+    urlChanged: true
   });
   assert.equal(restoreAttempts, 2);
 });
@@ -146,7 +147,8 @@ test("does not delay a browser action when its document stays active", async () 
   assert.deepEqual(result, {
     changed: false,
     documentId: "document-1",
-    restored: false
+    restored: false,
+    urlChanged: false
   });
   assert.equal(restores, 0);
 });
@@ -184,7 +186,8 @@ test("restores an indicator removed from the current document", async () => {
   assert.deepEqual(result, {
     changed: false,
     documentId: "document-1",
-    restored: true
+    restored: true,
+    urlChanged: false
   });
   assert.equal(restores, 1);
 });
@@ -220,6 +223,154 @@ test("returns a pending transition instead of misreporting a slow navigation", a
     changed: true,
     documentId: "document-1",
     pending: true,
-    restored: false
+    restored: false,
+    urlChanged: true
   });
+});
+
+test("reports same-document URL changes after JavaScript navigation", async () => {
+  const lifecycle = await import(lifecycleModule);
+  const restoreAfterNavigation =
+    lifecycle.restoreControlAfterNavigation;
+
+  const result = restoreAfterNavigation({
+    initialDocumentId: "document-1",
+    initialUrl: "https://example.com/search",
+    inspect() {
+      return {
+        controlVisible: true,
+        documentId: "document-1",
+        readyState: "complete",
+        tabUrl: "https://example.com/results",
+        url: "https://example.com/results"
+      };
+    },
+    now: () => 0,
+    restore() {},
+    sleep() {},
+    timeoutMs: 1000
+  });
+
+  assert.deepEqual(result, {
+    changed: false,
+    documentId: "document-1",
+    restored: false,
+    urlChanged: true
+  });
+});
+
+test("synchronizes a tab when navigation was observed but not predicted", async () => {
+  const { shouldSynchronizeActionTab } = await import(lifecycleModule);
+
+  assert.equal(
+    shouldSynchronizeActionTab(false, {
+      changed: false,
+      restored: false,
+      urlChanged: true
+    }),
+    true
+  );
+  assert.equal(
+    shouldSynchronizeActionTab(false, {
+      changed: false,
+      restored: false,
+      urlChanged: false
+    }),
+    false
+  );
+});
+
+test("waits for a redirected document to settle before returning", async () => {
+  const { restoreControlAfterNavigation } = await import(lifecycleModule);
+  let clock = 0;
+  let inspection = 0;
+  let finalControlVisible = false;
+
+  const result = restoreControlAfterNavigation({
+    initialDocumentId: "document-1",
+    initialUrl: "https://example.com/start",
+    inspect() {
+      inspection++;
+
+      if (inspection === 1) {
+        return {
+          controlVisible: true,
+          documentId: "document-2",
+          readyState: "complete",
+          tabUrl: "https://example.com/intermediate",
+          url: "https://example.com/intermediate"
+        };
+      }
+
+      if (inspection === 2) {
+        return {
+          controlVisible: false,
+          documentId: "document-3",
+          readyState: "loading",
+          tabUrl: "https://example.com/final",
+          url: "https://example.com/final"
+        };
+      }
+
+      return {
+        controlVisible: finalControlVisible,
+        documentId: "document-3",
+        readyState: "complete",
+        tabUrl: "https://example.com/final",
+        url: "https://example.com/final"
+      };
+    },
+    now: () => clock,
+    restore() {
+      finalControlVisible = true;
+    },
+    settleTimeMs: 100,
+    sleep(milliseconds) {
+      clock += milliseconds;
+    },
+    timeoutMs: 1000
+  });
+
+  assert.deepEqual(result, {
+    changed: true,
+    documentId: "document-3",
+    restored: true,
+    urlChanged: true
+  });
+});
+
+test("does not settle a load while the redirected document is replacing", async () => {
+  const { createPageStateSettler } = await import(lifecycleModule);
+  const settler = createPageStateSettler({
+    settleTimeMs: 100,
+    state: "complete"
+  });
+
+  assert.equal(settler.observe({
+    documentId: "old-document",
+    navigationPending: true,
+    readyState: "complete",
+    url: "https://example.com/final"
+  }, "https://example.com/final", 0), false);
+  assert.equal(settler.observe({
+    documentId: "old-document",
+    navigationPending: true,
+    readyState: "complete",
+    url: "https://example.com/final"
+  }, "https://example.com/final", 150), false);
+  assert.equal(settler.observe({
+    documentId: "final-document",
+    readyState: "loading",
+    url: "https://example.com/final"
+  }, "https://example.com/final", 50), false);
+  assert.equal(settler.observe({
+    documentId: "final-document",
+    readyState: "complete",
+    url: "https://example.com/final"
+  }, "https://example.com/final", 100), false);
+  assert.equal(settler.observe({
+    documentId: "final-document",
+    readyState: "complete",
+    url: "https://example.com/final"
+  }, "https://example.com/final", 200), true);
 });

@@ -24,6 +24,9 @@ test("builds a self-contained JXA MCP server", async t => {
   assert.equal(skillBundle, bundle);
   assert.match(bundle, /safari-browser-use/);
   assert.match(bundle, /function runPageOperation/);
+  assert.match(bundle, /SBUPlaywrightAriaSnapshot\.snapshot/);
+  assert.match(bundle, /Built from Microsoft Playwright v1\.62\.1/);
+  assert.doesNotMatch(bundle, /\/\*__SBU_[A-Z_]+__\*\//);
   assert.match(bundle, /Application\("Safari"\)/);
   assert.match(
     bundle,
@@ -45,7 +48,24 @@ test("builds a self-contained JXA MCP server", async t => {
     bundle,
     /SafariLocator\.prototype\.uploadFiles/
   );
+  assert.match(
+    bundle,
+    /SafariPlaywright\.prototype\.armFileUpload/
+  );
+  assert.match(
+    bundle,
+    /SafariPlaywright\.prototype\.waitForFileUpload/
+  );
+  assert.match(
+    bundle,
+    /SafariPlaywright\.prototype\.cancelFileUpload/
+  );
   assert.match(bundle, /playwright\.fileUploadStatus/);
+  assert.match(bundle, /waitForGoogleSheetsSelection\(target/);
+  assert.match(
+    bundle,
+    /verifyGoogleSheetsWrite\(tsv, readSelection\(\)\)/
+  );
   assert.match(bundle, /function resolveTabIdentity/);
   assert.match(bundle, /completeTabNavigation/);
   assert.match(bundle, /function findOpenedTabs/);
@@ -66,11 +86,15 @@ test("builds a self-contained JXA MCP server", async t => {
     bundle,
     /SafariPlaywright\.prototype\.waitForLoadState/
   );
+  assert.match(bundle, /function restoreControlAfterNavigation/);
   assert.match(
     bundle,
-    /pageState\.url === metadata\.url/
+    /shouldSynchronizeActionTab\(\s*navigationExpected,\s*restoration\s*\)/
   );
-  assert.match(bundle, /function restoreControlAfterNavigation/);
+  assert.match(
+    bundle,
+    /loadSettler\.observe\(\s*pageState,\s*metadata\.url,\s*Date\.now\(\)\s*\)/
+  );
   assert.match(bundle, /documentId/);
   assert.ok(
     (bundle.match(/restoreControlAfterNavigation\(/g) || []).length >= 2

@@ -17,7 +17,7 @@ test("README one-line prompt routes every supported plugin client", async () => 
 
   assert.ok(prompt, "the plugin section must contain one text prompt");
   assert.match(prompt, /safari-browser-use/);
-  assert.match(prompt, /https:\/\/github\.com\/vibevibe-labs\/safari-browser-use/);
+  assert.match(prompt, /https:\/\/github\.com\/citrolabs\/safari-browser-use/);
   assert.match(prompt, /Codex/i);
   assert.match(prompt, /Claude Code/i);
   assert.match(prompt, /GitHub Copilot CLI/i);
@@ -39,11 +39,11 @@ test("README gives executable installation routes for every plugin client", asyn
   );
 
   for (const route of [
-    /codex plugin marketplace add vibevibe-labs\/safari-browser-use/,
-    /claude plugin marketplace add vibevibe-labs\/safari-browser-use/,
-    /copilot plugin install vibevibe-labs\/safari-browser-use/,
-    /codebuddy plugin marketplace add vibevibe-labs\/safari-browser-use/,
-    /qoder plugins marketplace add vibevibe-labs\/safari-browser-use/,
+    /codex plugin marketplace add citrolabs\/safari-browser-use/,
+    /claude plugin marketplace add citrolabs\/safari-browser-use/,
+    /copilot plugin install citrolabs\/safari-browser-use/,
+    /codebuddy plugin marketplace add citrolabs\/safari-browser-use/,
+    /qoder plugins marketplace add citrolabs\/safari-browser-use/,
     /\.cursor\/plugins\/local/,
     /Add Custom Power|Import power from GitHub/i
   ]) {

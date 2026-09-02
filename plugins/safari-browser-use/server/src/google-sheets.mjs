@@ -100,6 +100,29 @@ function parseTsvRows(tsv) {
   return rows;
 }
 
+export function verifyGoogleSheetsWrite(expectedTsv, selection) {
+  const normalize = value =>
+    String(value ?? "").replace(/\r\n?/g, "\n");
+  const expected = normalize(expectedTsv);
+  const actual = normalize(selection?.tsv);
+
+  if (actual !== expected) {
+    throw new Error("google_sheets_write_verification_failed");
+  }
+
+  const rows = parseTsvRows(expected);
+
+  return {
+    columns: rows.reduce(
+      (maximum, row) => Math.max(maximum, row.length),
+      0
+    ),
+    rows: rows.length,
+    verified: true,
+    writtenRange: String(selection?.range || "")
+  };
+}
+
 function columnLetter(index) {
   let number = Number(index) + 1;
   let result = "";
@@ -330,6 +353,15 @@ export function createGoogleSheets({
   }
 
   return Object.freeze({
+    capabilities() {
+      return {
+        cellFormatting: false,
+        embeddedImages: false,
+        html: true,
+        tsv: true,
+        values: true
+      };
+    },
     parseUrl: parseGoogleSheetsUrl,
     getSpreadsheetInfo(target) {
       return readSpreadsheet(googleSheetsTarget(target));

@@ -7,6 +7,10 @@ import {
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import {
+  buildPlaywrightAriaSnapshot
+} from "./build-playwright-aria-snapshot.mjs";
+
 const repositoryRoot = resolve(
   dirname(fileURLToPath(import.meta.url)),
   ".."
@@ -93,6 +97,7 @@ export async function buildPlugin({
   const [
     template,
     pageRuntime,
+    playwrightAriaSnapshot,
     safariVersion,
     toolDefinitions,
     nativeInput,
@@ -107,6 +112,7 @@ export async function buildPlugin({
   ] = await Promise.all([
     readFile(templatePath, "utf8"),
     readFile(pageRuntimePath, "utf8"),
+    buildPlaywrightAriaSnapshot(),
     readFile(safariVersionPath, "utf8"),
     readFile(toolDefinitionsPath, "utf8"),
     readFile(nativeInputPath, "utf8"),
@@ -121,57 +127,42 @@ export async function buildPlugin({
   ]);
   const withoutExports = source =>
     source.replace(/^export\s+/gm, "");
-  const output = template
-    .replace(
-      "/*__SBU_PAGE_RUNTIME__*/",
-      withoutExports(pageRuntime)
-    )
-    .replace(
-      "/*__SBU_SAFARI_VERSION__*/",
-      withoutExports(safariVersion)
-    )
-    .replace(
-      "/*__SBU_TOOL_DEFINITIONS__*/",
-      withoutExports(toolDefinitions)
-    )
-    .replace(
-      "/*__SBU_NATIVE_INPUT__*/",
-      withoutExports(nativeInput)
-    )
-    .replace(
-      "/*__SBU_GOOGLE_ACCOUNTS__*/",
-      withoutExports(googleAccounts)
-    )
-    .replace(
-      "/*__SBU_GOOGLE_DOCS__*/",
-      withoutExports(googleDocs)
-    )
-    .replace(
-      "/*__SBU_GOOGLE_SHEETS__*/",
-      withoutExports(googleSheets)
-    )
-    .replace(
+  const replacements = [
+    ["/*__SBU_PAGE_RUNTIME__*/", withoutExports(pageRuntime)],
+    [
+      "/*__SBU_PLAYWRIGHT_ARIA_SNAPSHOT_SOURCE__*/",
+      `var SBU_PLAYWRIGHT_ARIA_SNAPSHOT_SOURCE = ${
+        JSON.stringify(playwrightAriaSnapshot)
+      };`
+    ],
+    ["/*__SBU_SAFARI_VERSION__*/", withoutExports(safariVersion)],
+    ["/*__SBU_TOOL_DEFINITIONS__*/", withoutExports(toolDefinitions)],
+    ["/*__SBU_NATIVE_INPUT__*/", withoutExports(nativeInput)],
+    ["/*__SBU_GOOGLE_ACCOUNTS__*/", withoutExports(googleAccounts)],
+    ["/*__SBU_GOOGLE_DOCS__*/", withoutExports(googleDocs)],
+    ["/*__SBU_GOOGLE_SHEETS__*/", withoutExports(googleSheets)],
+    [
       "/*__SBU_GOOGLE_WORKSPACE_EDITOR__*/",
       withoutExports(googleWorkspaceEditor)
-    )
-    .replace(
-      "/*__SBU_CONTROL_LIFECYCLE__*/",
-      withoutExports(controlLifecycle)
-    )
-    .replace(
-      "/*__SBU_TAB_IDENTITY__*/",
-      withoutExports(tabIdentity)
-    )
-    .replace(
+    ],
+    ["/*__SBU_CONTROL_LIFECYCLE__*/", withoutExports(controlLifecycle)],
+    ["/*__SBU_TAB_IDENTITY__*/", withoutExports(tabIdentity)],
+    [
       "/*__SBU_DOCUMENTATION__*/",
       `var SBU_DOCUMENTATION_TEXT = ${JSON.stringify(documentation)};`
-    )
-    .replace(
+    ],
+    [
       "/*__SBU_DOCUMENTATION_TROUBLESHOOTING__*/",
       `var SBU_DOCUMENTATION_TROUBLESHOOTING_TEXT = ${
         JSON.stringify(troubleshooting)
       };`
-    );
+    ]
+  ];
+  const output = replacements.reduce(
+    (source, [marker, replacement]) =>
+      source.replace(marker, () => replacement),
+    template
+  );
 
   await mkdir(dirname(outfile), { recursive: true });
   await writeFile(outfile, output);

@@ -75,8 +75,8 @@ test("WorkBuddy, CodeBuddy, and Qoder marketplaces publish only the root package
   ]) {
     const marketplace = await readJson(path);
 
-    assert.equal(marketplace.name, "vibevibe-labs");
-    assert.equal(marketplace.owner.name, "VibeVibe Labs");
+    assert.equal(marketplace.name, "citrolabs");
+    assert.equal(marketplace.owner.name, "CitroLabs");
     assert.deepEqual(marketplace.plugins.map(plugin => ({
       name: plugin.name,
       source: plugin.source,

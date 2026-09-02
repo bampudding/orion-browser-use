@@ -49,3 +49,23 @@ export function googleSheetsRangeUrl(url, range) {
     `&range=${encodeURIComponent(String(range))}`
   );
 }
+
+export function waitForGoogleSheetsSelection(range, options) {
+  const target = String(range).toUpperCase();
+  const now = options.now ?? Date.now;
+  const deadline = now() + (options.timeoutMs ?? 5000);
+
+  while (now() <= deadline) {
+    const state = options.inspect();
+
+    if (
+      String(state?.selectionRange || "").toUpperCase() === target
+    ) {
+      return state;
+    }
+
+    options.sleep(50);
+  }
+
+  throw new Error("google_sheets_selection_timeout: " + target);
+}

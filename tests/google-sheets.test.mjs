@@ -11,6 +11,25 @@ const moduleUrl = new URL(
   import.meta.url
 );
 
+test("reports Google Sheets capabilities before opening an editor", async () => {
+  const { createGoogleSheets } = await import(moduleUrl);
+  const googleSheets = createGoogleSheets({
+    readSpreadsheet() {},
+    readSheet() {},
+    openEditor() {
+      throw new Error("unexpected editor open");
+    }
+  });
+
+  assert.deepEqual(googleSheets.capabilities(), {
+    cellFormatting: false,
+    embeddedImages: false,
+    html: true,
+    tsv: true,
+    values: true
+  });
+});
+
 test("parses a Google Sheets URL with account and grid IDs", async () => {
   const { parseGoogleSheetsUrl } = await import(moduleUrl);
 
@@ -295,6 +314,33 @@ test("converts copied TSV into typed A1 cell records", async () => {
         }
       ]
     }
+  );
+});
+
+test("verifies a pasted TSV selection and reports its dimensions", async () => {
+  const { verifyGoogleSheetsWrite } = await import(moduleUrl);
+
+  assert.deepEqual(
+    verifyGoogleSheetsWrite(
+      "Name\tCount\nController\t2",
+      {
+        range: "A1:B2",
+        tsv: "Name\tCount\r\nController\t2"
+      }
+    ),
+    {
+      columns: 2,
+      rows: 2,
+      verified: true,
+      writtenRange: "A1:B2"
+    }
+  );
+  assert.throws(
+    () => verifyGoogleSheetsWrite(
+      "expected",
+      { range: "A1", tsv: "different" }
+    ),
+    /google_sheets_write_verification_failed/
   );
 });
 

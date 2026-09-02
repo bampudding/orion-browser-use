@@ -1,7 +1,7 @@
 {
-  "name": "vibevibe-labs",
+  "name": "citrolabs",
   "interface": {
-    "displayName": "VibeVibe Labs"
+    "displayName": "CitroLabs"
   },
   "plugins": [
     {

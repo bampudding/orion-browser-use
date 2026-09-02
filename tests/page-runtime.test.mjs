@@ -11,6 +11,7 @@ function createPage(html) {
   const window = new Window({
     url: "https://example.com/form"
   });
+  window.document.documentElement.style.visibility = "visible";
   window.document.body.innerHTML = html;
 
   return {
@@ -118,38 +119,6 @@ test("uses the Sheets canvas when the generic grid wrapper has no size", () => {
   );
 });
 
-test("returns a Playwright-style DOM snapshot", () => {
-  const { execute } = createPage(`
-    <label for="email">Email address</label>
-    <input id="email">
-    <button>Continue</button>
-  `);
-
-  assert.equal(
-    execute("playwright.domSnapshot"),
-    [
-      '- textbox "Email address"',
-      '- button "Continue"'
-    ].join("\n")
-  );
-});
-
-test("includes stable locator attributes in the DOM snapshot", () => {
-  const { execute } = createPage(`
-    <section data-testid="product-card">
-      <a href="/buy" data-testid="buy-link">Buy now</a>
-    </section>
-  `);
-
-  assert.equal(
-    execute("playwright.domSnapshot"),
-    [
-      '- element "Buy now" [data-testid="product-card"]',
-      '- link "Buy now" [data-testid="buy-link"] [href="/buy"]'
-    ].join("\n")
-  );
-});
-
 test("counts and clicks an element located by role and name", () => {
   const { execute, window } = createPage(`
     <button aria-label="Continue">Next</button>
@@ -177,6 +146,23 @@ test("counts and clicks an element located by role and name", () => {
   });
 
   assert.equal(clicks, 1);
+});
+
+test("recognizes native heading elements by their implicit role", () => {
+  const { execute } = createPage(`
+    <h1>Redirect complete</h1>
+  `);
+  const locator = [{
+    type: "role",
+    role: "heading",
+    name: "Redirect complete",
+    exact: true
+  }];
+
+  assert.equal(
+    execute("playwright.locator.count", { locator }),
+    1
+  );
 });
 
 test("supports scoped CSS and text locators", () => {
@@ -245,6 +231,49 @@ test("fills an element located by its label", () => {
     window.document.querySelector("input").value,
     "Ada Lovelace"
   );
+});
+
+test("fills a framework-controlled input through its native value setter", () => {
+  const { execute, window } = createPage(`
+    <label for="search">Search</label>
+    <input id="search">
+  `);
+  const input = window.document.querySelector("#search");
+  const nativeValue = Object.getOwnPropertyDescriptor(
+    window.HTMLInputElement.prototype,
+    "value"
+  );
+  let trackedValue = input.value;
+
+  Object.defineProperty(input, "value", {
+    configurable: true,
+    get() {
+      return nativeValue.get.call(this);
+    },
+    set(value) {
+      trackedValue = String(value);
+      nativeValue.set.call(this, value);
+    }
+  });
+  input.addEventListener("input", () => {
+    const currentValue = nativeValue.get.call(input);
+
+    if (currentValue === trackedValue) {
+      nativeValue.set.call(input, "");
+      return;
+    }
+
+    trackedValue = currentValue;
+  });
+
+  execute("playwright.locator.fill", {
+    locator: [{ type: "css", selector: "#search" }],
+    value: "Xbox controller",
+    options: {}
+  });
+
+  assert.equal(input.value, "Xbox controller");
+  assert.equal(trackedValue, "Xbox controller");
 });
 
 test("fills a contenteditable rich editor by locator", () => {
@@ -393,6 +422,22 @@ test("reports the loaded document URL with its readiness state", () => {
   assert.equal(first.controlVisible, false);
   assert.match(first.documentId, /^document-/);
   assert.equal(second.documentId, first.documentId);
+});
+
+test("reports when the current document has started unloading", () => {
+  const { execute, window } = createPage("<main>Loading</main>");
+
+  assert.equal(
+    execute("playwright.pageState").navigationPending,
+    false
+  );
+
+  window.dispatchEvent(new window.Event("beforeunload"));
+
+  assert.equal(
+    execute("playwright.pageState").navigationPending,
+    true
+  );
 });
 
 test("scrolls the page by explicit offsets", () => {
@@ -668,6 +713,43 @@ test("describes a download click without claiming completion", () => {
         kind: "download",
         suggestedFilename: "sales.csv",
         url: "https://example.com/report.csv"
+      }
+    }
+  );
+});
+
+test("describes a programmatic download created by a button click", () => {
+  const { execute, window } = createPage(`
+    <button>Download image</button>
+  `);
+  const button = window.document.querySelector("button");
+
+  button.addEventListener("click", () => {
+    const link = window.document.createElement("a");
+    link.href = "blob:https://example.com/generated-image";
+    link.download = "xbox-controller.png";
+    link.addEventListener("click", event => event.preventDefault());
+    link.click();
+  });
+
+  assert.deepEqual(
+    execute("playwright.locator.click", {
+      locator: [{
+        type: "role",
+        role: "button",
+        name: "Download image",
+        exact: true
+      }],
+      options: {}
+    }),
+    {
+      clicked: true,
+      navigationExpected: false,
+      transition: {
+        kind: "download",
+        programmatic: true,
+        suggestedFilename: "xbox-controller.png",
+        url: "blob:https://example.com/generated-image"
       }
     }
   );
@@ -1159,6 +1241,54 @@ test("keeps an upload armed for an asynchronously created input", async () => {
 
   assert.equal(armed.status, "pending");
   await new Promise(resolve => window.setTimeout(resolve, 10));
+
+  const result = execute("playwright.fileUploadStatus", {
+    token: armed.token
+  });
+
+  assert.equal(result.status, "uploaded");
+  assert.equal(result.via, "dynamic-input");
+  assert.equal(uploaded, "photo.png");
+});
+
+test("keeps an upload session armed across a two-step menu", () => {
+  const { execute, window } = createPage(`
+    <button id="menu">Add</button>
+    <button id="upload" hidden>Upload from computer</button>
+  `);
+  const menu = window.document.querySelector("#menu");
+  const upload = window.document.querySelector("#upload");
+  let uploaded = null;
+
+  menu.addEventListener("click", () => {
+    upload.hidden = false;
+  });
+  upload.addEventListener("click", () => {
+    const input = window.document.createElement("input");
+    input.type = "file";
+    input.addEventListener("change", () => {
+      uploaded = input.files[0]?.name ?? null;
+    });
+    window.document.body.append(input);
+    input.click();
+  });
+
+  const armed = execute("playwright.fileUploadArm", {
+    files: [{
+      name: "photo.png",
+      mimeType: "image/png",
+      base64: "SEVMTE8="
+    }],
+    options: { timeoutMs: 30000 }
+  });
+
+  assert.equal(armed.status, "pending");
+  execute("playwright.locator.click", {
+    locator: [{ type: "css", selector: "#menu" }]
+  });
+  execute("playwright.locator.click", {
+    locator: [{ type: "css", selector: "#upload" }]
+  });
 
   const result = execute("playwright.fileUploadStatus", {
     token: armed.token

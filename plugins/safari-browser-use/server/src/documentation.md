@@ -194,6 +194,19 @@ intentionally smaller than upstream Playwright; call only the methods listed in
 the API Reference section below. Every method runs synchronously; the value of
 the final expression is returned.
 
+`domSnapshot()` returns a Playwright ARIA snapshot serialized as hierarchical
+YAML. It includes accessible roles and names, text, control values and states,
+open shadow roots, and same-origin iframe content. `data-testid` is retained as
+a `/data-testid` YAML property so the snapshot can still drive stable locators.
+Cross-origin iframe contents remain unavailable to Safari page JavaScript and
+are represented by the `iframe` node only. Scope large pages with either a CSS
+root or an already verified locator:
+
+```js
+tab.playwright.domSnapshot({ root: "#product-list" })
+tab.playwright.getByTestId("product-list").domSnapshot()
+```
+
 Interaction workflow:
 
 1. Reuse the current `tab` binding when it is still valid.
@@ -401,6 +414,7 @@ clipboard formats afterward. Always close a connected editor with
 
 | Method | Purpose |
 |---|---|
+| `googleSheets.capabilities()` | Report supported value, HTML, formatting, and image operations |
 | `googleSheets.parseUrl(url)` | Return `{ spreadsheetId, uid?, gid? }` |
 | `googleSheets.getSpreadsheetInfo(target)` | Read title and sheet metadata |
 | `googleSheets.readSheet(target, gid?)` | Read one used region |
@@ -408,8 +422,8 @@ clipboard formats afterward. Always close a connected editor with
 | `googleSheets.create(accountId)` | Create and connect a spreadsheet |
 | `googleSheets.connect(url)` | Connect an existing spreadsheet |
 | `googleSheets.dispose()` | Close the managed tab |
-| `googleSheets.writeMatrix(range, data)` | Paste a 2D array |
-| `googleSheets.writeTsv(range, tsv)` | Paste TSV |
+| `googleSheets.writeMatrix(range, data)` | Paste and verify a 2D array |
+| `googleSheets.writeTsv(range, tsv)` | Paste and verify TSV |
 | `googleSheets.writeHtml(range, html)` | Paste rich HTML |
 | `googleSheets.navigateToCell(cell)` | Select an A1 cell or range |
 | `googleSheets.switchSheet(gid)` | Switch by numeric sheet gid |
@@ -424,7 +438,11 @@ clipboard formats afterward. Always close a connected editor with
 | `tab.url()` | Read the current URL |
 | `tab.goto(url)` | Navigate to an HTTP or HTTPS URL |
 | `tab.close()` | Close the tab unless it is currently selected |
-| `tab.playwright.domSnapshot()` | Read a semantic DOM snapshot |
+| `tab.playwright.domSnapshot(options?)` | Read a semantic DOM snapshot; pass `{ root }` to scope it |
+| `tab.playwright.armFileUpload(paths, options?)` | Arm a multi-step file upload session |
+| `tab.playwright.fileUploadStatus(token)` | Inspect an armed upload session |
+| `tab.playwright.waitForFileUpload(token, options?)` | Wait for and clean up an armed upload session |
+| `tab.playwright.cancelFileUpload(token)` | Cancel and clean up an armed upload session |
 | `tab.playwright.canvasSnapshot(selector, options?)` | Capture one `<canvas>` as an image the model can see |
 | `tab.playwright.scrollBy(deltaX, deltaY)` | Scroll the page by explicit pixel offsets |
 | `tab.playwright.clickAt(x, y, options?)` | Click at viewport coordinates (for `<canvas>` / drawing surfaces) |
@@ -492,6 +510,7 @@ var buy = card.getByRole("button", { name: "Buy", exact: true })
 | `setChecked(value)` | Set checked state explicitly |
 | `selectOption(value)` | Select native `<select>` options |
 | `canvasSnapshot(options?)` | Capture one `<canvas>` element as a PNG image the model can see |
+| `domSnapshot()` | Read a semantic snapshot scoped to this strict locator |
 | `setInputFiles(paths)` | Upload local file(s) into a `<input type="file">` |
 | `uploadFiles(paths, options?)` | Upload through a visible trigger that owns a static or dynamic file input |
 | `dropFiles(paths)` | Drop local file(s) onto a drag-and-drop upload zone |
@@ -505,7 +524,8 @@ throw when the locator resolves to zero or multiple elements.
 `transition.kind: "same-tab"`; a newly opened tab — including one opened by page
 JavaScript — returns `"new-tab"` and includes `transition.tab` when it can be
 identified uniquely (or `transition.tabs` when several distinct tabs opened); a
-download link returns `"download"` with its URL and suggested filename. When a
+download link or a programmatically clicked dynamic download anchor returns
+`"download"` with its URL and suggested filename. When a
 slow same-tab navigation exceeds the indicator restoration window, the click
 remains successful and returns `transition.pending: true`; call `waitForURL()`
 and `waitForLoadState()` to finish the observable wait instead of retrying the
@@ -578,6 +598,16 @@ tab.playwright.locator("#avatar").setInputFiles("/Users/me/photo.png")
 tab.playwright.locator("#dropzone").dropFiles(["/Users/me/a.pdf", "/Users/me/b.pdf"])
 ```
 
+For a menu that requires more than one click, arm the files first, perform the
+verified menu clicks, and then wait for the captured file input:
+
+```js
+var upload = tab.playwright.armFileUpload("/Users/me/photo.png")
+tab.playwright.getByRole("button", { name: "Add" }).click()
+tab.playwright.getByRole("menuitem", { name: "Upload file" }).click()
+tab.playwright.waitForFileUpload(upload.token)
+```
+
 Never click a visible upload control before calling `uploadFiles()`. The method
 arms a one-shot interceptor first, then clicks the trigger and captures a static
 or dynamically created file input without opening the system file chooser.
@@ -592,11 +622,11 @@ the upload control; report that the site requires a native file chooser.
 carrying the files. Both return `{ files: [{ name, size, type }], via }`.
 
 For file **downloads**, locate the download control and `click()` it. The result
-identifies a DOM-declared download with `transition.kind: "download"`, its URL,
-and any suggested filename. This confirms that the click was dispatched, not
-that Safari finished the download. Safari controls the destination and completion
-state through its normal download flow; the Apple Events API does not expose a
-reliable final local path.
+identifies a declared or synchronously created programmatic download with
+`transition.kind: "download"`, its URL, and any suggested filename. This
+confirms that the click was dispatched, not that Safari finished the download.
+Safari controls the destination and completion state through its normal download
+flow; the Apple Events API does not expose a reliable final local path.
 
 ### Unsupported Operations
 

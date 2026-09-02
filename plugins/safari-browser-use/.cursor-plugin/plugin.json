@@ -1,13 +1,13 @@
 {
   "name": "safari-browser-use",
   "displayName": "Safari Browser Use",
-  "version": "0.1.1+codex.20260828175006",
+  "version": "0.1.2-20260902",
   "description": "Control the user's existing Safari 26 session with agent-written JavaScript.",
   "author": {
-    "name": "VibeVibe Labs"
+    "name": "CitroLabs"
   },
-  "homepage": "https://github.com/vibevibe-labs/safari-browser-use",
-  "repository": "https://github.com/vibevibe-labs/safari-browser-use",
+  "homepage": "https://github.com/citrolabs/safari-browser-use",
+  "repository": "https://github.com/citrolabs/safari-browser-use",
   "keywords": [
     "safari",
     "browser-automation",
