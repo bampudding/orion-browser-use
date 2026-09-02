@@ -8,5 +8,5 @@
   },
   "repository": "https://github.com/vibevibe-labs/safari-browser-use",
   "skills": "./skills/",
-  "mcpServers": "./.mcp.json"
+  "mcpServers": "./claude.mcp.json"
 }

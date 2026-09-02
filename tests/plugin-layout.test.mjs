@@ -15,8 +15,8 @@ async function readRepositoryJson(path) {
 
 test("all client manifests expose the shared skill and native MCP config", async () => {
   const manifests = [
-    [".codex-plugin/plugin.json", "./codex.mcp.json"],
-    [".claude-plugin/plugin.json", "./.mcp.json"],
+    [".codex-plugin/plugin.json", "./.mcp.json"],
+    [".claude-plugin/plugin.json", "./claude.mcp.json"],
     ["plugin.json", "./copilot.mcp.json"],
     [".cursor-plugin/plugin.json", "./cursor.mcp.json"]
   ];
@@ -39,9 +39,9 @@ test("all client manifests expose the shared skill and native MCP config", async
 
 test("client MCP configurations start JXA with the system osascript", async () => {
   const configurations = [
-    ["codex.mcp.json", "dist/safari-repl.jxa.js"],
+    [".mcp.json", "dist/safari-repl.jxa.js"],
     [
-      ".mcp.json",
+      "claude.mcp.json",
       "${CLAUDE_PLUGIN_ROOT}/dist/safari-repl.jxa.js"
     ],
     [
@@ -67,8 +67,8 @@ test("client MCP configurations start JXA with the system osascript", async () =
     ]);
   }
 
-  const codex = await readJson("codex.mcp.json");
-  assert.equal(codex["safari-browser-use"].cwd, ".");
+  const codex = await readJson(".mcp.json");
+  assert.equal(codex.mcpServers["safari-browser-use"].cwd, ".");
 
   const copilot = await readJson("copilot.mcp.json");
   assert.deepEqual(

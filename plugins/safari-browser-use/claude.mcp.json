@@ -5,9 +5,8 @@
       "args": [
         "-l",
         "JavaScript",
-        "dist/safari-repl.jxa.js"
-      ],
-      "cwd": "."
+        "${CLAUDE_PLUGIN_ROOT}/dist/safari-repl.jxa.js"
+      ]
     }
   }
 }
