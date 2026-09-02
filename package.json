@@ -9,6 +9,7 @@
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "1.29.0",
+    "esbuild": "0.28.1",
     "happy-dom": "20.11.1"
   }
 }
