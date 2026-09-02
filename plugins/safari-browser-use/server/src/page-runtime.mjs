@@ -2,20 +2,9 @@ export function runPageOperation(
   document,
   window,
   method,
-  params = {}
+  params = {},
+  dependencies = {}
 ) {
-  const interactiveSelector = [
-    "a[href]",
-    "button",
-    "input",
-    "select",
-    "textarea",
-    "[contenteditable='true']",
-    "[role]",
-    "[tabindex]"
-  ].join(",");
-  const snapshotSelector =
-    `${interactiveSelector},[data-testid]`;
   const controlIndicatorAttribute =
     "data-safari-browser-use-control";
   const controlCursorAttribute =
@@ -26,6 +15,10 @@ export function runPageOperation(
     "__safari_browser_use_control_timer__";
   const documentIdKey =
     "__safari_browser_use_document_id__";
+  const navigationPendingKey =
+    "__safari_browser_use_navigation_pending__";
+  const navigationObserverKey =
+    "__safari_browser_use_navigation_observer__";
   const highlightAttribute =
     "data-safari-browser-use-highlight";
   const highlightStyleId =
@@ -168,6 +161,23 @@ export function runPageOperation(
     return window[documentIdKey];
   }
 
+  function pageNavigationPending() {
+    if (!window[navigationObserverKey]) {
+      const markPending = () => {
+        window[navigationPendingKey] = true;
+      };
+
+      window.addEventListener("beforeunload", markPending);
+      window.addEventListener("pagehide", markPending);
+      window.addEventListener("pageshow", () => {
+        window[navigationPendingKey] = false;
+      });
+      window[navigationObserverKey] = true;
+    }
+
+    return window[navigationPendingKey] === true;
+  }
+
   function navigationTransition(element) {
     const anchor = element.closest?.("a[href]");
 
@@ -263,6 +273,59 @@ export function runPageOperation(
         : "new-tab",
       url: destination
     };
+  }
+
+  function captureDownloadDuring(action) {
+    const anchorPrototype = window.HTMLAnchorElement?.prototype;
+    const originalClick = anchorPrototype?.click;
+    let captured = null;
+
+    function capture(anchor) {
+      if (
+        captured ||
+        !anchor ||
+        !anchor.hasAttribute?.("download")
+      ) {
+        return;
+      }
+
+      const transition = {
+        kind: "download",
+        programmatic: true,
+        url: String(anchor.href || anchor.getAttribute("href") || "")
+      };
+      const suggestedFilename = anchor.getAttribute("download");
+
+      if (suggestedFilename) {
+        transition.suggestedFilename = suggestedFilename;
+      }
+
+      captured = transition;
+    }
+
+    function captureClick(event) {
+      capture(event.target?.closest?.("a[download]"));
+    }
+
+    document.addEventListener("click", captureClick, true);
+
+    if (anchorPrototype && typeof originalClick === "function") {
+      anchorPrototype.click = function () {
+        capture(this);
+        return originalClick.call(this);
+      };
+    }
+
+    try {
+      action();
+      return captured;
+    } finally {
+      document.removeEventListener("click", captureClick, true);
+
+      if (anchorPrototype && typeof originalClick === "function") {
+        anchorPrototype.click = originalClick;
+      }
+    }
   }
 
   function controlCursorElement() {
@@ -583,6 +646,10 @@ export function runPageOperation(
   function implicitRole(element) {
     const tagName = element.tagName.toLowerCase();
 
+    if (/^h[1-6]$/.test(tagName)) {
+      return "heading";
+    }
+
     if (tagName === "a" && element.hasAttribute("href")) {
       return "link";
     }
@@ -802,6 +869,20 @@ export function runPageOperation(
     );
   }
 
+  function setNativeControlValue(element, value) {
+    const descriptor = Object.getOwnPropertyDescriptor(
+      Object.getPrototypeOf(element),
+      "value"
+    );
+
+    if (typeof descriptor?.set === "function") {
+      descriptor.set.call(element, String(value));
+      return;
+    }
+
+    element.value = String(value);
+  }
+
   function fillElement(element, value) {
     if (isContentEditable(element)) {
       fillContentEditable(element, value);
@@ -812,7 +893,7 @@ export function runPageOperation(
       throw new Error("element_not_fillable");
     }
 
-    element.value = String(value);
+    setNativeControlValue(element, value);
     element.dispatchEvent(
       new window.Event("input", { bubbles: true })
     );
@@ -1069,8 +1150,11 @@ export function runPageOperation(
     }
 
     const timeoutMs = Math.min(
-      Math.max(Number(options?.timeoutMs) || 3000, 100),
-      10000
+      Math.max(
+        Number(options?.timeoutMs) || (trigger ? 3000 : 30000),
+        100
+      ),
+      60000
     );
     session.timer = window.setTimeout(() => {
       if (session.status === "pending") {
@@ -1081,16 +1165,18 @@ export function runPageOperation(
     }, timeoutMs);
     window[fileUploadSessionKey] = session;
 
-    try {
-      trigger.scrollIntoView?.({
-        block: "center",
-        inline: "center"
-      });
-      trigger.click();
-    } catch (error) {
-      session.status = "error";
-      session.error = error?.message ?? String(error);
-      restoreUploadHooks(session);
+    if (trigger) {
+      try {
+        trigger.scrollIntoView?.({
+          block: "center",
+          inline: "center"
+        });
+        trigger.click();
+      } catch (error) {
+        session.status = "error";
+        session.error = error?.message ?? String(error);
+        restoreUploadHooks(session);
+      }
     }
 
     return uploadSessionResult(session);
@@ -1312,31 +1398,20 @@ export function runPageOperation(
   }
 
   function domSnapshot() {
-    return [...document.querySelectorAll(snapshotSelector)]
-      .filter(element => isVisible(element))
-      .map(element => {
-        const role = element.getAttribute("role") ||
-          implicitRole(element) ||
-          "element";
-        const name = accessibleName(element);
-        const attributes = [
-          "data-testid",
-          "href",
-          "placeholder"
-        ]
-          .flatMap(attribute => {
-            const value = element.getAttribute(attribute);
-            return value === null
-              ? []
-              : [`[${attribute}=${JSON.stringify(value)}]`];
-          })
-          .join(" ");
-        return [
-          `- ${role} ${JSON.stringify(name)}`,
-          attributes
-        ].filter(Boolean).join(" ");
-      })
-      .join("\n");
+    let root = document.body || document.documentElement;
+
+    if (params.locator) {
+      root = oneLocatorElement(params.locator);
+    } else if (params.root !== undefined) {
+      root = oneLocatorElement([{
+        type: "css",
+        selector: String(params.root)
+      }]);
+    }
+
+    return dependencies.ariaSnapshot(
+      root
+    );
   }
 
   function matchesState(locator, state) {
@@ -1493,6 +1568,7 @@ export function runPageOperation(
         `[${controlIndicatorAttribute}]`
       )),
       documentId: pageDocumentId(),
+      navigationPending: pageNavigationPending(),
       readyState: document.readyState,
       url: window.location.href
     };
@@ -1540,6 +1616,14 @@ export function runPageOperation(
 
   if (method === "playwright.fileUploadStatus") {
     return fileUploadStatus(params.token);
+  }
+
+  if (method === "playwright.fileUploadArm") {
+    return armFileUpload(
+      null,
+      params.files,
+      params.options || {}
+    );
   }
 
   if (method === "playwright.fileUploadCleanup") {
@@ -1645,11 +1729,16 @@ export function runPageOperation(
       });
       moveControlCursorToElement(element, params);
       highlightElement(element);
-      element.click();
+      const capturedDownload = captureDownloadDuring(() => {
+        element.click();
+      });
+      const observedTransition = transition || capturedDownload;
       return {
         clicked: true,
         navigationExpected,
-        ...(transition ? { transition } : {})
+        ...(observedTransition
+          ? { transition: observedTransition }
+          : {})
       };
     case "canvasSnapshot":
       return canvasSnapshot(element, params);

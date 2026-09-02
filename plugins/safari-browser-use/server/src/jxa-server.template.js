@@ -8,6 +8,8 @@ ObjC.bindFunction(
 
 /*__SBU_PAGE_RUNTIME__*/
 
+/*__SBU_PLAYWRIGHT_ARIA_SNAPSHOT_SOURCE__*/
+
 /*__SBU_SAFARI_VERSION__*/
 
 /*__SBU_TOOL_DEFINITIONS__*/
@@ -286,14 +288,19 @@ var run = (function (globalObject) {
 
   function pageJavaScript(method, params) {
     var runtime = runPageOperation.toString();
+    var usesAriaSnapshot = method === "playwright.domSnapshot";
 
     return [
       "(function () {",
+      usesAriaSnapshot ? SBU_PLAYWRIGHT_ARIA_SNAPSHOT_SOURCE : "",
       "try {",
       "var value = (" + runtime + ")(",
       "document, window,",
       JSON.stringify(method) + ",",
-      JSON.stringify(params),
+      JSON.stringify(params) + ",",
+      usesAriaSnapshot
+        ? "{ ariaSnapshot: SBUPlaywrightAriaSnapshot.snapshot }"
+        : "{}",
       ");",
       "return JSON.stringify({",
       "ok: true,",
@@ -711,6 +718,7 @@ var run = (function (globalObject) {
         );
       },
       returnOnTimeout: options.returnOnTimeout,
+      settleTimeMs: options.settleTimeMs,
       timeoutMs: options.timeoutMs
     });
   }
@@ -735,6 +743,7 @@ var run = (function (globalObject) {
     return restoreControlForNavigation(tabId, initialState, {
       changeTimeoutMs: navigationExpected ? 1000 : 250,
       returnOnTimeout: true,
+      settleTimeMs: 150,
       timeoutMs: 10000
     });
   }
@@ -852,6 +861,40 @@ var run = (function (globalObject) {
     );
   }
 
+  function waitForFileUpload(params) {
+    var options = params.options || {};
+    var timeoutMs = Math.min(
+      options.timeoutMs === undefined ? 30000 : options.timeoutMs,
+      60000
+    );
+    var deadline = Date.now() + timeoutMs;
+    var result = runPage("playwright.fileUploadStatus", {
+      tabId: params.tabId,
+      token: params.token
+    });
+
+    while (result.status === "pending" && Date.now() <= deadline) {
+      foundation.NSThread.sleepForTimeInterval(0.05);
+      result = runPage("playwright.fileUploadStatus", {
+        tabId: params.tabId,
+        token: params.token
+      });
+    }
+
+    runPage("playwright.fileUploadCleanup", {
+      tabId: params.tabId,
+      token: params.token
+    });
+
+    if (result.status === "uploaded") {
+      return result;
+    }
+
+    throw new Error(
+      result.error || "file_upload_input_not_captured"
+    );
+  }
+
   function waitForURL(params) {
     var options = params.options || {};
     var expected = String(params.expected);
@@ -903,6 +946,10 @@ var run = (function (globalObject) {
       30000
     );
     var deadline = Date.now() + timeoutMs;
+    var loadSettler = createPageStateSettler({
+      settleTimeMs: 150,
+      state: state
+    });
 
     if (state !== "interactive" && state !== "complete") {
       throw new Error("unsupported_load_state: " + state);
@@ -918,12 +965,11 @@ var run = (function (globalObject) {
         var pageState = runPage("playwright.pageState", {
           tabId: metadata.id
         });
-        var matched = pageState.url === metadata.url &&
-          (
-            pageState.readyState === "complete" ||
-            state === "interactive" &&
-              pageState.readyState === "interactive"
-          );
+        var matched = loadSettler.observe(
+          pageState,
+          metadata.url,
+          Date.now()
+        );
 
         if (matched) {
           controlLifecycle.activate(metadata.id);
@@ -1005,6 +1051,7 @@ var run = (function (globalObject) {
 
       restoreControlForNavigation(params.tabId, initialState, {
         changeTimeoutMs: 10000,
+        settleTimeMs: 150,
         timeoutMs: 10000
       });
       synchronizeActionTab(params.tabIdentity, params.tabId);
@@ -1028,6 +1075,10 @@ var run = (function (globalObject) {
 
     if (method === "playwright.locator.uploadFiles") {
       return uploadFiles(params);
+    }
+
+    if (method === "playwright.fileUploadWait") {
+      return waitForFileUpload(params);
     }
 
     if (method === "playwright.gesture") {
@@ -1147,11 +1198,24 @@ var run = (function (globalObject) {
             navigationExpected
           );
 
-          if (navigationExpected) {
-            synchronizeActionTab(
+          if (
+            shouldSynchronizeActionTab(
+              navigationExpected,
+              restoration
+            )
+          ) {
+            var navigationMetadata = synchronizeActionTab(
               params.tabIdentity,
               params.tabId
             );
+
+            if (!transition) {
+              transition = {
+                kind: "same-tab",
+                url: navigationMetadata.url
+              };
+              operationResult.transition = transition;
+            }
 
             if (restoration && restoration.pending) {
               transition.pending = true;
@@ -1453,6 +1517,13 @@ var run = (function (globalObject) {
     });
   };
 
+  SafariLocator.prototype.domSnapshot = function () {
+    return callSafari("playwright.domSnapshot", {
+      locator: this.steps,
+      tabIdentity: this.tabIdentity
+    });
+  };
+
   SafariLocator.prototype.setInputFiles = function (paths) {
     return this.call("setInputFiles", {
       files: readLocalFiles(paths)
@@ -1519,9 +1590,47 @@ var run = (function (globalObject) {
       .getByTestId(testId);
   };
 
-  SafariPlaywright.prototype.domSnapshot = function () {
+  SafariPlaywright.prototype.domSnapshot = function (options) {
+    options = options || {};
     return callSafari("playwright.domSnapshot", {
+      root: options.root,
       tabIdentity: this.tabIdentity
+    });
+  };
+
+  SafariPlaywright.prototype.armFileUpload = function (
+    paths,
+    options
+  ) {
+    return callSafari("playwright.fileUploadArm", {
+      files: readLocalFiles(paths),
+      options: options || {},
+      tabIdentity: this.tabIdentity
+    });
+  };
+
+  SafariPlaywright.prototype.fileUploadStatus = function (token) {
+    return callSafari("playwright.fileUploadStatus", {
+      tabIdentity: this.tabIdentity,
+      token: token
+    });
+  };
+
+  SafariPlaywright.prototype.waitForFileUpload = function (
+    token,
+    options
+  ) {
+    return callSafari("playwright.fileUploadWait", {
+      options: options || {},
+      tabIdentity: this.tabIdentity,
+      token: token
+    });
+  };
+
+  SafariPlaywright.prototype.cancelFileUpload = function (token) {
+    return callSafari("playwright.fileUploadCleanup", {
+      tabIdentity: this.tabIdentity,
+      token: token
     });
   };
 
@@ -1975,10 +2084,41 @@ var run = (function (globalObject) {
         throw new Error("invalid_google_sheets_range");
       }
 
-      managedTab.navigate(
-        googleSheetsRangeUrl(managedTab.url(), target)
-      );
-      foundation.NSThread.sleepForTimeInterval(0.25);
+      var current = state();
+
+      if (String(current.selectionRange).toUpperCase() !== target) {
+        if (current.nameBoxPoint) {
+          nativeInput.clickAt(
+            managedTab.id(),
+            current.nameBoxPoint.x,
+            current.nameBoxPoint.y
+          );
+          nativeInput.shortcut(
+            managedTab.id(),
+            "a",
+            ["command"]
+          );
+          nativeInput.paste(managedTab.id(), { text: target });
+          nativeInput.shortcut(managedTab.id(), "enter", []);
+        } else {
+          managedTab.navigate(
+            googleSheetsRangeUrl(managedTab.url(), target)
+          );
+        }
+      }
+
+      var selected = waitForGoogleSheetsSelection(target, {
+        inspect: state,
+        now: Date.now,
+        sleep: function (milliseconds) {
+          foundation.NSThread.sleepForTimeInterval(
+            milliseconds / 1000
+          );
+        },
+        timeoutMs: 5000
+      });
+
+      return { range: selected.selectionRange };
     }
 
     function readSelection() {
@@ -2003,7 +2143,7 @@ var run = (function (globalObject) {
       writeTsv: function (range, tsv) {
         navigateToCell(range);
         nativeInput.paste(managedTab.id(), { text: tsv });
-        foundation.NSThread.sleepForTimeInterval(0.25);
+        return verifyGoogleSheetsWrite(tsv, readSelection());
       },
       writeHtml: function (range, html) {
         navigateToCell(range);
