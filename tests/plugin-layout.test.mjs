@@ -26,10 +26,7 @@ test("all client manifests expose the shared skill and native MCP config", async
     const manifest = await readJson(path);
 
     assert.equal(manifest.name, "safari-browser-use");
-    assert.match(
-      manifest.version,
-      /^0\.1\.1(?:\+codex\.[A-Za-z0-9.-]+)?$/
-    );
+    assert.equal(manifest.version, "0.1.2-20260902");
     sharedVersion ??= manifest.version;
     assert.equal(manifest.version, sharedVersion);
     assert.equal(manifest.skills, "./skills/");
@@ -122,7 +119,7 @@ test("GitHub Copilot and Cursor marketplaces publish the shared plugin directory
   })), [{
     name: "safari-browser-use",
     source: "./plugins/safari-browser-use",
-    version: "0.1.1"
+    version: "0.1.2-20260902"
   }]);
 
   const cursor = await readRepositoryJson(

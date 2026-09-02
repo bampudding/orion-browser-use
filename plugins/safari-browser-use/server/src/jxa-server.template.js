@@ -1826,7 +1826,7 @@ var run = (function (globalObject) {
     return tab;
   }
 
-  var serverVersion = "0.1.1";
+  var serverVersion = "0.1.2-20260902";
 
   var documentationTopics = {
     troubleshooting: SBU_DOCUMENTATION_TROUBLESHOOTING_TEXT
