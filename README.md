@@ -4,12 +4,12 @@
 
 **Control your existing Safari 26 tabs with AI agents — no browser extension or companion app required.**
 
-[![Version](https://img.shields.io/badge/Version-0.1.1-6C63FF?style=for-the-badge)](https://github.com/vibevibe-labs/safari-browser-use)
+[![Version](https://img.shields.io/badge/Version-0.1.1-6C63FF?style=for-the-badge)](https://github.com/citrolabs/safari-browser-use)
 [![macOS](https://img.shields.io/badge/macOS-Required-000000?style=for-the-badge&logo=apple&logoColor=white)](https://www.apple.com/macos/)
 [![Safari](https://img.shields.io/badge/Safari-26-006CFF?style=for-the-badge&logo=safari&logoColor=white)](https://www.apple.com/safari/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-00C4CC?style=for-the-badge)](LICENSE)
-[![GitHub stars](https://img.shields.io/github/stars/vibevibe-labs/safari-browser-use?style=for-the-badge&logo=github&color=FFD700)](https://github.com/vibevibe-labs/safari-browser-use/stargazers)
-[![GitHub followers](https://img.shields.io/github/followers/vibevibe-labs?style=for-the-badge&logo=github&color=181717)](https://github.com/vibevibe-labs)
+[![GitHub stars](https://img.shields.io/github/stars/citrolabs/safari-browser-use?style=for-the-badge&logo=github&color=FFD700)](https://github.com/citrolabs/safari-browser-use/stargazers)
+[![GitHub followers](https://img.shields.io/github/followers/citrolabs?style=for-the-badge&logo=github&color=181717)](https://github.com/citrolabs)
 </div>
 
 ## Overview
@@ -49,7 +49,7 @@ for each client, so the agent must not assume that every client has the same
 plugin installer:
 
 ```text
-Install Safari Browser Use from https://github.com/vibevibe-labs/safari-browser-use using the current client's plugin installer when supported: use `codex plugin marketplace add` then `codex plugin add` for Codex, `claude plugin marketplace add` then `claude plugin install` for Claude Code, `copilot plugin install vibevibe-labs/safari-browser-use:plugins/safari-browser-use` for GitHub Copilot CLI, `codebuddy plugin marketplace add` then `codebuddy plugin install` for CodeBuddy or WorkBuddy, `qoder plugins marketplace add` then `qoder plugins install safari-browser-use` for Qoder, import this GitHub repository as an Agent Plugin/Power through Kiro's Add Custom Power flow for Kiro, and use the documented local checkout for Cursor; verify the result instead of claiming success. Stop after installation, then tell me whether to reload plugins or start a new session and give me one example request.
+Install Safari Browser Use from https://github.com/citrolabs/safari-browser-use using the current client's plugin installer when supported: use `codex plugin marketplace add` then `codex plugin add` for Codex, `claude plugin marketplace add` then `claude plugin install` for Claude Code, `copilot plugin install citrolabs/safari-browser-use:plugins/safari-browser-use` for GitHub Copilot CLI, `codebuddy plugin marketplace add` then `codebuddy plugin install` for CodeBuddy or WorkBuddy, `qoder plugins marketplace add` then `qoder plugins install safari-browser-use` for Qoder, import this GitHub repository as an Agent Plugin/Power through Kiro's Add Custom Power flow for Kiro, and use the documented local checkout for Cursor; verify the result instead of claiming success. Stop after installation, then tell me whether to reload plugins or start a new session and give me one example request.
 ```
 
 This is one routing prompt, not one universal shell command. Kiro requires a
@@ -63,7 +63,7 @@ For agents that do not support plugins, install the standalone `control-safari`
 Skill:
 
 ```sh
-npx skills add vibevibe-labs/safari-browser-use --skill control-safari -g
+npx skills add citrolabs/safari-browser-use --skill control-safari -g
 ```
 
 Select the target agent when prompted, then start a new agent session. This
@@ -75,8 +75,8 @@ installs the script-driven Skill without the MCP plugin.
 <summary><strong>Codex</strong></summary>
 
 ```sh
-codex plugin marketplace add vibevibe-labs/safari-browser-use
-codex plugin add safari-browser-use@vibevibe-labs
+codex plugin marketplace add citrolabs/safari-browser-use
+codex plugin add safari-browser-use@citrolabs
 ```
 
 Start a new Codex task after installation.
@@ -87,8 +87,8 @@ Start a new Codex task after installation.
 <summary><strong>Claude Code</strong></summary>
 
 ```sh
-claude plugin marketplace add vibevibe-labs/safari-browser-use --scope user
-claude plugin install safari-browser-use@vibevibe-labs --scope user
+claude plugin marketplace add citrolabs/safari-browser-use --scope user
+claude plugin install safari-browser-use@citrolabs --scope user
 ```
 
 Run `/reload-plugins` after installation.
@@ -99,7 +99,7 @@ Run `/reload-plugins` after installation.
 <summary><strong>GitHub Copilot CLI</strong></summary>
 
 ```sh
-copilot plugin install vibevibe-labs/safari-browser-use:plugins/safari-browser-use
+copilot plugin install citrolabs/safari-browser-use:plugins/safari-browser-use
 ```
 
 Start a new Copilot CLI session after installation.
@@ -110,8 +110,8 @@ Start a new Copilot CLI session after installation.
 <summary><strong>CodeBuddy / WorkBuddy</strong></summary>
 
 ```sh
-codebuddy plugin marketplace add vibevibe-labs/safari-browser-use
-codebuddy plugin install safari-browser-use@vibevibe-labs
+codebuddy plugin marketplace add citrolabs/safari-browser-use
+codebuddy plugin install safari-browser-use@citrolabs
 ```
 
 Run `/reload-plugins` after installation.
@@ -122,7 +122,7 @@ Run `/reload-plugins` after installation.
 <summary><strong>Qoder</strong></summary>
 
 ```sh
-qoder plugins marketplace add vibevibe-labs/safari-browser-use
+qoder plugins marketplace add citrolabs/safari-browser-use
 qoder plugins install safari-browser-use
 ```
 
@@ -137,7 +137,7 @@ Kiro loads the root Agent Plugins package as a Power. In **Kiro → Powers → A
 Custom Power**, choose **Import power from GitHub** and enter:
 
 ```text
-https://github.com/vibevibe-labs/safari-browser-use
+https://github.com/citrolabs/safari-browser-use
 ```
 
 </details>
@@ -149,7 +149,7 @@ Until the plugin is available in Cursor Marketplace, install it from a local
 checkout:
 
 ```sh
-git clone --depth 1 https://github.com/vibevibe-labs/safari-browser-use.git
+git clone --depth 1 https://github.com/citrolabs/safari-browser-use.git
 mkdir -p "$HOME/.cursor/plugins/local"
 cp -R safari-browser-use/plugins/safari-browser-use "$HOME/.cursor/plugins/local/"
 ```
@@ -224,8 +224,8 @@ not remain attached indefinitely.
 ## Support
 
 Found a bug or have an idea? Open an
-[issue](https://github.com/vibevibe-labs/safari-browser-use/issues) or explore
-more projects from [VibeVibe Labs](https://github.com/vibevibe-labs).
+[issue](https://github.com/citrolabs/safari-browser-use/issues) or explore
+more projects from [CitroLabs](https://github.com/citrolabs).
 
 <div align="center">
 

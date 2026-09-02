@@ -3,16 +3,16 @@
   "version": "0.1.1+codex.20260828175006",
   "description": "Control the user's existing Safari 26 session with agent-written JavaScript.",
   "author": {
-    "name": "VibeVibe Labs",
-    "url": "https://github.com/vibevibe-labs"
+    "name": "CitroLabs",
+    "url": "https://github.com/citrolabs"
   },
-  "repository": "https://github.com/vibevibe-labs/safari-browser-use",
+  "repository": "https://github.com/citrolabs/safari-browser-use",
   "skills": "./skills/",
   "interface": {
     "displayName": "Safari Browser Use",
     "shortDescription": "Control Safari 26 with agent-written code.",
     "longDescription": "Safari Browser Use connects Codex to the user's existing Safari 26 session through a local MCP server and macOS Apple Events.",
-    "developerName": "VibeVibe Labs",
+    "developerName": "CitroLabs",
     "category": "Productivity",
     "capabilities": [
       "Interactive",

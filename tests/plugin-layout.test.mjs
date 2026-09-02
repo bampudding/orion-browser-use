@@ -90,7 +90,7 @@ test("the Claude marketplace publishes the shared plugin directory", async () =>
     ".claude-plugin/marketplace.json"
   );
 
-  assert.equal(marketplace.name, "vibevibe-labs");
+  assert.equal(marketplace.name, "citrolabs");
   assert.match(marketplace.description, /Safari 26/);
   assert.deepEqual(marketplace.plugins.map(plugin => ({
     name: plugin.name,
@@ -106,15 +106,15 @@ test("the Codex marketplace uses the public publisher name", async () => {
     ".agents/plugins/marketplace.json"
   );
 
-  assert.equal(marketplace.name, "vibevibe-labs");
-  assert.equal(marketplace.interface.displayName, "VibeVibe Labs");
+  assert.equal(marketplace.name, "citrolabs");
+  assert.equal(marketplace.interface.displayName, "CitroLabs");
 });
 
 test("GitHub Copilot and Cursor marketplaces publish the shared plugin directory", async () => {
   const copilot = await readRepositoryJson(
     ".github/plugin/marketplace.json"
   );
-  assert.equal(copilot.name, "vibevibe-labs");
+  assert.equal(copilot.name, "citrolabs");
   assert.deepEqual(copilot.plugins.map(plugin => ({
     name: plugin.name,
     source: plugin.source,
@@ -128,7 +128,7 @@ test("GitHub Copilot and Cursor marketplaces publish the shared plugin directory
   const cursor = await readRepositoryJson(
     ".cursor-plugin/marketplace.json"
   );
-  assert.equal(cursor.name, "vibevibe-labs");
+  assert.equal(cursor.name, "citrolabs");
   assert.deepEqual(cursor.plugins.map(plugin => ({
     name: plugin.name,
     source: plugin.source
@@ -155,29 +155,29 @@ test("repository installation guide covers every supported client", async () => 
   assert.match(readme, /GitHub Copilot/);
   assert.match(
     readme,
-    /codex plugin marketplace add vibevibe-labs\/safari-browser-use/
+    /codex plugin marketplace add citrolabs\/safari-browser-use/
   );
   assert.match(
     readme,
-    /codex plugin add safari-browser-use@vibevibe-labs/
+    /codex plugin add safari-browser-use@citrolabs/
   );
   assert.match(
     readme,
-    /claude plugin marketplace add vibevibe-labs\/safari-browser-use/
+    /claude plugin marketplace add citrolabs\/safari-browser-use/
   );
   assert.match(
     readme,
-    /claude plugin install safari-browser-use@vibevibe-labs/
+    /claude plugin install safari-browser-use@citrolabs/
   );
   assert.match(
     readme,
-    /copilot plugin install vibevibe-labs\/safari-browser-use:plugins\/safari-browser-use/
+    /copilot plugin install citrolabs\/safari-browser-use:plugins\/safari-browser-use/
   );
   assert.match(readme, /Cursor/);
   assert.match(readme, /\.cursor\/plugins\/local/);
   assert.match(
     readme,
-    /npx skills add vibevibe-labs\/safari-browser-use --skill control-safari -g/
+    /npx skills add citrolabs\/safari-browser-use --skill control-safari -g/
   );
   assert.match(
     readme,
