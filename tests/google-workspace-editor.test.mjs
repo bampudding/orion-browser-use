@@ -93,3 +93,23 @@ test("builds a Sheets range URL without duplicating gid parameters", async () =>
     ].join("")
   );
 });
+
+test("waits until Google Sheets selects the requested range", async () => {
+  const { waitForGoogleSheetsSelection } = await import(moduleUrl);
+  const ranges = ["A1", "A1", "B5:C7"];
+  let clock = 0;
+
+  assert.deepEqual(
+    waitForGoogleSheetsSelection("b5:c7", {
+      inspect() {
+        return { selectionRange: ranges.shift() };
+      },
+      now: () => clock,
+      sleep(milliseconds) {
+        clock += milliseconds;
+      },
+      timeoutMs: 1000
+    }),
+    { selectionRange: "B5:C7" }
+  );
+});

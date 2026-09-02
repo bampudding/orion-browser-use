@@ -19,6 +19,10 @@ googleSheets.readSheet(sheetUrl)
 googleSheets.readAllSheets(sheetUrl)
 ```
 
+Call `googleSheets.capabilities()` before planning image or formatting work. It
+currently reports value/TSV/HTML support and explicitly reports embedded images
+and cell formatting as unsupported.
+
 `getSpreadsheetInfo()` returns the title and bootstrap sheet metadata, including
 sheet names, gids, and allocated row/column sizes.
 `readSheet()` selects the used region, copies it as TSV, and converts non-empty
@@ -38,10 +42,11 @@ connected. `connect(url)` opens an existing spreadsheet:
 
 ```js
 var createdSheet = googleSheets.create(1)
-googleSheets.writeMatrix("A1", [
+var write = googleSheets.writeMatrix("A1", [
   ["Name", "Count"],
   ["Ada", 42]
 ])
+write // { writtenRange, rows, columns, verified: true }
 googleSheets.readSelection()
 googleSheets.dispose()
 ```
@@ -60,12 +65,14 @@ Only one Sheets editor can be connected at a time. Always call
 Writes use trusted macOS keyboard input and clipboard paste because the Sheets
 grid rejects synthetic DOM typing. Native input brings Safari to the foreground
 and requires macOS Accessibility permission for the app running Safari Browser
-Use.
+Use. TSV and matrix writes select the requested range, paste, copy the result
+back, and fail if the copied value does not match.
 
 ## Supported methods
 
 | Method | Purpose |
 |---|---|
+| `googleSheets.capabilities()` | Report supported and unsupported operations |
 | `googleSheets.parseUrl(url)` | Return `{ spreadsheetId, uid?, gid? }` |
 | `googleSheets.getSpreadsheetInfo(target)` | Read title and sheet metadata |
 | `googleSheets.readSheet(target, gid?)` | Read one used region as cell records |
@@ -73,8 +80,8 @@ Use.
 | `googleSheets.create(accountId)` | Create and connect a spreadsheet |
 | `googleSheets.connect(url)` | Open and connect an existing spreadsheet |
 | `googleSheets.dispose()` | Close the managed Sheets tab |
-| `googleSheets.writeMatrix(range, data)` | Paste a 2D array as escaped TSV |
-| `googleSheets.writeTsv(range, tsv)` | Paste TSV at an A1 range |
+| `googleSheets.writeMatrix(range, data)` | Paste and verify a 2D array as escaped TSV |
+| `googleSheets.writeTsv(range, tsv)` | Paste and verify TSV at an A1 range |
 | `googleSheets.writeHtml(range, html)` | Paste rich HTML at an A1 range |
 | `googleSheets.navigateToCell(cell)` | Select an A1 cell or rectangular range |
 | `googleSheets.switchSheet(gid)` | Switch by numeric sheet gid |
