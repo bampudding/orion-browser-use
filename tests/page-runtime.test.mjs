@@ -755,7 +755,7 @@ test("describes a programmatic download created by a button click", () => {
   );
 });
 
-test("shows one non-interactive AI control indicator", () => {
+test("shows one mouse-blocking AI control indicator", () => {
   const { execute, window } = createPage("<main>Dashboard</main>");
 
   execute("control.show", { leaseMs: 1000 });
@@ -774,7 +774,7 @@ test("shows one non-interactive AI control indicator", () => {
 
   assert.equal(indicators.length, 1);
   assert.equal(indicator, original);
-  assert.equal(indicator.style.pointerEvents, "none");
+  assert.equal(indicator.style.pointerEvents, "auto");
   assert.equal(indicator.getAttribute("aria-hidden"), "true");
   assert.match(style.textContent, /prefers-reduced-motion/);
 
@@ -798,6 +798,81 @@ test("makes active AI control visually unmistakable", () => {
   assert.match(indicator.style.boxShadow, /140px 28px/);
   assert.match(style.textContent, /1300ms/);
   assert.match(style.textContent, /opacity: 0\.64/);
+
+  execute("control.hide");
+});
+
+test("lets a native click through the overlay and re-arms it", () => {
+  const { execute, window } = createPage("<main>Dashboard</main>");
+
+  execute("control.show", { leaseMs: 1000 });
+  const indicator = window.document.querySelector(
+    "[data-safari-browser-use-control]"
+  );
+
+  const opened = execute("control.passthrough", { enabled: true });
+
+  assert.deepEqual(opened, { passthrough: true, visible: true });
+  assert.equal(indicator.style.pointerEvents, "none");
+
+  const closed = execute("control.passthrough", { enabled: false });
+
+  assert.deepEqual(closed, { passthrough: false, visible: true });
+  assert.equal(indicator.style.pointerEvents, "auto");
+
+  execute("control.hide");
+});
+
+test("re-arms the overlay when a passthrough was left open", () => {
+  const { execute, window } = createPage("<main>Dashboard</main>");
+
+  execute("control.show", { leaseMs: 1000 });
+  execute("control.passthrough", { enabled: true });
+  execute("control.show", { leaseMs: 1000 });
+
+  const indicator = window.document.querySelector(
+    "[data-safari-browser-use-control]"
+  );
+
+  assert.equal(indicator.style.pointerEvents, "auto");
+
+  execute("control.hide");
+});
+
+test("reports no indicator to toggle when control is not shown", () => {
+  const { execute } = createPage("<main>Dashboard</main>");
+
+  assert.deepEqual(
+    execute("control.passthrough", { enabled: true }),
+    { passthrough: true, visible: false }
+  );
+});
+
+test("dispatches coordinate gestures past the control overlay", () => {
+  const { execute, window } = createPage(
+    `<button id="save">Save</button>`
+  );
+  const button = window.document.querySelector("#save");
+
+  execute("control.show", { leaseMs: 1000 });
+  const indicator = window.document.querySelector(
+    "[data-safari-browser-use-control]"
+  );
+
+  window.document.elementFromPoint = () => indicator;
+  window.document.elementsFromPoint = () => [indicator, button];
+
+  let clicks = 0;
+  button.addEventListener("click", () => clicks++);
+
+  const result = execute("playwright.mouseEvent", {
+    type: "click",
+    x: 12,
+    y: 14
+  });
+
+  assert.equal(result.target, "button");
+  assert.equal(clicks, 1);
 
   execute("control.hide");
 });

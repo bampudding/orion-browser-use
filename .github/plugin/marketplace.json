@@ -5,14 +5,14 @@
   },
   "metadata": {
     "description": "Safari 26 browser automation plugins from CitroLabs.",
-    "version": "0.1.2-20260902"
+    "version": "0.1.2-20260904"
   },
   "plugins": [
     {
       "name": "safari-browser-use",
       "source": "./plugins/safari-browser-use",
       "description": "Control the user's existing Safari 26 session with agent-written JavaScript.",
-      "version": "0.1.2-20260902"
+      "version": "0.1.2-20260904"
     }
   ]
 }

@@ -1,11 +1,10 @@
 {
   "mcpServers": {
     "safari-browser-use": {
-      "command": "/usr/bin/osascript",
+      "command": "sh",
       "args": [
-        "-l",
-        "JavaScript",
-        "dist/safari-repl.jxa.js"
+        "-c",
+        "plugin_root=$CLAUDE_PLUGIN_ROOT; if [ -z \"$plugin_root\" ]; then plugin_root=$PWD; fi; exec /usr/bin/osascript -l JavaScript \"$plugin_root/dist/safari-repl.jxa.js\""
       ],
       "cwd": "."
     }

@@ -581,6 +581,17 @@ var run = (function (globalObject) {
     }
   });
 
+  function setControlPassthrough(tabId, enabled) {
+    try {
+      runPage("control.passthrough", {
+        tabId: tabId,
+        enabled: enabled
+      });
+    } catch (error) {
+      // A navigating document may have no indicator to toggle.
+    }
+  }
+
   function runNativeClick(params) {
     runPage("playwright.gestureHighlight", {
       tabId: params.tabId,
@@ -589,11 +600,19 @@ var run = (function (globalObject) {
       y: params.y
     });
 
-    return nativeInput.clickAt(
-      params.tabId,
-      params.x,
-      params.y
-    );
+    // The overlay blocks the mouse, and a native click is real mouse
+    // input, so it has to be let through for exactly this one click.
+    setControlPassthrough(params.tabId, true);
+
+    try {
+      return nativeInput.clickAt(
+        params.tabId,
+        params.x,
+        params.y
+      );
+    } finally {
+      setControlPassthrough(params.tabId, false);
+    }
   }
 
   function mimeTypeForPath(path) {
@@ -1826,7 +1845,7 @@ var run = (function (globalObject) {
     return tab;
   }
 
-  var serverVersion = "0.1.2-20260902";
+  var serverVersion = "0.1.2-20260904";
 
   var documentationTopics = {
     troubleshooting: SBU_DOCUMENTATION_TROUBLESHOOTING_TEXT

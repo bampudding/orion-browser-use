@@ -16,7 +16,7 @@ async function readRepositoryJson(path) {
 test("all client manifests expose the shared skill and native MCP config", async () => {
   const manifests = [
     [".codex-plugin/plugin.json", "./.mcp.json"],
-    [".claude-plugin/plugin.json", "./claude.mcp.json"],
+    [".claude-plugin/plugin.json", "./.mcp.json"],
     ["plugin.json", "./copilot.mcp.json"],
     [".cursor-plugin/plugin.json", "./cursor.mcp.json"]
   ];
@@ -26,7 +26,7 @@ test("all client manifests expose the shared skill and native MCP config", async
     const manifest = await readJson(path);
 
     assert.equal(manifest.name, "safari-browser-use");
-    assert.equal(manifest.version, "0.1.2-20260902");
+    assert.equal(manifest.version, "0.1.2-20260904");
     sharedVersion ??= manifest.version;
     assert.equal(manifest.version, sharedVersion);
     assert.equal(manifest.skills, "./skills/");
@@ -34,38 +34,64 @@ test("all client manifests expose the shared skill and native MCP config", async
   }
 });
 
-test("client MCP configurations start JXA with the system osascript", async () => {
+test("Claude and Codex publish one MCP configuration source", async () => {
+  const claudeManifest = await readJson(".claude-plugin/plugin.json");
+  const codexManifest = await readJson(".codex-plugin/plugin.json");
+  const configPaths = new Set(["./.mcp.json"]);
+  configPaths.add(claudeManifest.mcpServers);
+  configPaths.add(codexManifest.mcpServers);
+
+  assert.deepEqual([...configPaths], ["./.mcp.json"]);
+  for (const path of ["claude.mcp.json", "codex.mcp.json"]) {
+    await assert.rejects(
+      access(new URL(path, pluginRoot)),
+      error => error.code === "ENOENT"
+    );
+  }
+});
+
+test("client MCP configurations start the bundled JXA server", async () => {
+  const sharedLauncher = "plugin_root=$CLAUDE_PLUGIN_ROOT; if [ -z \"$plugin_root\" ]; then plugin_root=$PWD; fi; exec /usr/bin/osascript -l JavaScript \"$plugin_root/dist/safari-repl.jxa.js\"";
   const configurations = [
-    [".mcp.json", "dist/safari-repl.jxa.js"],
-    [
-      "claude.mcp.json",
-      "${CLAUDE_PLUGIN_ROOT}/dist/safari-repl.jxa.js"
-    ],
-    [
-      "copilot.mcp.json",
-      "${PLUGIN_ROOT}/dist/safari-repl.jxa.js"
-    ],
-    [
-      "cursor.mcp.json",
-      "${CURSOR_PLUGIN_ROOT}/dist/safari-repl.jxa.js"
-    ]
+    {
+      path: ".mcp.json",
+      command: "sh",
+      args: ["-c", sharedLauncher]
+    },
+    {
+      path: "copilot.mcp.json",
+      command: "/usr/bin/osascript",
+      args: [
+        "-l",
+        "JavaScript",
+        "${PLUGIN_ROOT}/dist/safari-repl.jxa.js"
+      ]
+    },
+    {
+      path: "cursor.mcp.json",
+      command: "/usr/bin/osascript",
+      args: [
+        "-l",
+        "JavaScript",
+        "${CURSOR_PLUGIN_ROOT}/dist/safari-repl.jxa.js"
+      ]
+    }
   ];
 
-  for (const [path, serverPath] of configurations) {
+  for (const { path, command, args } of configurations) {
     const config = await readJson(path);
     const servers = config.mcpServers ?? config.mcp_servers ?? config;
     const server = servers["safari-browser-use"];
 
-    assert.equal(server.command, "/usr/bin/osascript");
-    assert.deepEqual(server.args, [
-      "-l",
-      "JavaScript",
-      serverPath
-    ]);
+    assert.equal(server.command, command);
+    assert.deepEqual(server.args, args);
   }
 
   const codex = await readJson(".mcp.json");
-  assert.equal(codex.mcpServers["safari-browser-use"].cwd, ".");
+  assert.equal(
+    codex.mcpServers["safari-browser-use"].cwd,
+    "."
+  );
 
   const copilot = await readJson("copilot.mcp.json");
   assert.deepEqual(
@@ -119,7 +145,7 @@ test("GitHub Copilot and Cursor marketplaces publish the shared plugin directory
   })), [{
     name: "safari-browser-use",
     source: "./plugins/safari-browser-use",
-    version: "0.1.2-20260902"
+    version: "0.1.2-20260904"
   }]);
 
   const cursor = await readRepositoryJson(

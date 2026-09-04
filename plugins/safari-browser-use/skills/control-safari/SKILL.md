@@ -76,10 +76,13 @@ rules are in `browser.documentation()`.
 
 ## Control indicator
 
-Operating a tab adds a non-interactive perimeter glow and a visible fake cursor
-to the controlled page. Always call `browser.release()` before the final
-response to remove the control indicator, including when the task finishes early.
-`js_reset` and MCP shutdown also release it.
+Operating a tab adds a perimeter glow and a visible fake cursor to the
+controlled page, and blocks the user's mouse over the page content while it is
+up. Their keyboard and Safari's own chrome stay live, so it prevents collisions
+rather than enforcing a boundary. Always call `browser.release()` before the
+final response to remove the control indicator and give the mouse back,
+including when the task finishes early. `js_reset` and MCP shutdown also
+release it.
 
 The full API surface, safety model, and troubleshooting all live in the runtime
 documentation: call `browser.documentation()` and, for setup problems,
