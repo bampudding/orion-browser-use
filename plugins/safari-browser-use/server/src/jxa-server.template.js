@@ -28,6 +28,10 @@ ObjC.bindFunction(
 
 /*__SBU_TAB_IDENTITY__*/
 
+/*__SBU_WEBMCP_CATALOG__*/
+
+/*__SBU_WEBMCP_PAGE__*/
+
 /*__SBU_DOCUMENTATION__*/
 
 /*__SBU_DOCUMENTATION_TROUBLESHOOTING__*/
@@ -287,7 +291,9 @@ var run = (function (globalObject) {
   }
 
   function pageJavaScript(method, params) {
-    var runtime = runPageOperation.toString();
+    var runtime = method.indexOf("webmcp.") === 0
+      ? runWebmcpPageOperation.toString()
+      : runPageOperation.toString();
     var usesAriaSnapshot = method === "playwright.domSnapshot";
 
     return [
@@ -711,7 +717,387 @@ var run = (function (globalObject) {
       throw new Error("control_indicator_restore_failed");
     }
 
+    ensureWebmcpRecorder(tabId);
     return verified;
+  }
+
+  // --- Site API Tools (WebMCP) session state -------------------------
+
+  var webmcpStore = createWebmcpStore();
+
+  function webmcpSiteForTab(tabId) {
+    var tabUrl = findTab(tabId).tab.url();
+    var hostname = "";
+
+    try {
+      hostname = parseUrl(String(tabUrl || "")).hostname;
+    } catch (error) {
+      hostname = "";
+    }
+
+    return hostname ? siteKeyFor(hostname) : "";
+  }
+
+  function drainWebmcp(tabId) {
+    var entry = webmcpStore.recording(tabId);
+
+    if (!entry) {
+      return 0;
+    }
+
+    // The tab may have moved to another site while recording; keep the
+    // catalog bucket in step with the page that produced the captures.
+    var currentSite = webmcpSiteForTab(tabId);
+
+    if (currentSite) {
+      webmcpStore.setSite(tabId, currentSite);
+    }
+
+    var drained = runPage("webmcp.drain", { tabId: tabId });
+    return webmcpStore.mergeCaptures(entry.site, drained.captures);
+  }
+
+  function ensureWebmcpRecorder(tabId) {
+    var entry = webmcpStore.recording(tabId);
+
+    if (!entry) {
+      return null;
+    }
+
+    try {
+      var installed = runPage("webmcp.install", { tabId: tabId });
+
+      if (installed.pending > 0) {
+        drainWebmcp(tabId);
+      }
+
+      return installed;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function stopWebmcpRecorder(tabId) {
+    var entry = webmcpStore.recording(tabId);
+
+    if (!entry) {
+      return null;
+    }
+
+    try {
+      drainWebmcp(tabId);
+    } catch (error) {
+      // The tab may already be gone.
+    }
+
+    try {
+      runPage("webmcp.uninstall", { tabId: tabId });
+    } catch (error) {
+      // The tab may already be gone.
+    }
+
+    webmcpStore.stop(tabId);
+    return webmcpStore.summary(entry.site);
+  }
+
+  function stopAllWebmcpRecorders() {
+    var tabIds = webmcpStore.recordingTabIds();
+
+    for (var index = 0; index < tabIds.length; index++) {
+      stopWebmcpRecorder(tabIds[index]);
+    }
+  }
+
+  function webmcpSleep(milliseconds) {
+    foundation.NSThread.sleepForTimeInterval(milliseconds / 1000);
+  }
+
+  function pollWebmcpCall(tabId, token, timeoutMs) {
+    var deadline = Date.now() + timeoutMs;
+    var result;
+
+    while (true) {
+      result = runPage("webmcp.callStatus", {
+        tabId: tabId,
+        token: token
+      });
+
+      if (result.status !== "pending") {
+        return result;
+      }
+
+      if (Date.now() > deadline) {
+        runPage("webmcp.callStatus", {
+          tabId: tabId,
+          token: token,
+          abort: true
+        });
+        throw new Error("webmcp_call_timeout: " + timeoutMs + "ms");
+      }
+
+      webmcpSleep(50);
+    }
+  }
+
+  // Probe GET URLs the patch never saw, then merge whatever came back as
+  // JSON into the catalog. Bounded: at most `limit` URLs, 15 s total.
+  function probeWebmcp(tabId, entry, options) {
+    options = options || {};
+    var token = webmcpToken();
+    var started = runPage("webmcp.probe", {
+      tabId: tabId,
+      token: token,
+      site: entry.site,
+      urls: Array.isArray(options.urls) ? options.urls : undefined,
+      limit: options.limit,
+      thirdParty: options.thirdParty === true
+    });
+
+    if (started.total === 0) {
+      runPage("webmcp.callStatus", { tabId: tabId, token: token });
+      return { probed: 0, learned: 0, results: [] };
+    }
+
+    var result = pollWebmcpCall(
+      tabId,
+      token,
+      Math.min(Number(options.timeoutMs) || 15000, 30000)
+    );
+    var learned = drainWebmcp(tabId);
+    var kept = 0;
+
+    for (var index = 0; index < result.results.length; index++) {
+      if (result.results[index].kept) {
+        kept += 1;
+      }
+    }
+
+    return {
+      probed: result.results.length,
+      kept: kept,
+      learned: learned,
+      results: result.results
+    };
+  }
+
+  function webmcpToken() {
+    return (
+      Date.now().toString(36) + "-" +
+      Math.random().toString(36).slice(2, 10)
+    );
+  }
+
+  function shapeWebmcpResult(name, request, result, options, startedAt) {
+    var shaped = {
+      name: name,
+      method: request.method,
+      url: request.url.length > 300
+        ? request.url.slice(0, 300) + "…(" + request.url.length + " chars)"
+        : request.url,
+      httpStatus: result.httpStatus,
+      ok: Boolean(result.ok),
+      contentType: result.contentType || "",
+      bytes: result.bytes,
+      truncated: Boolean(result.truncated),
+      elapsedMs: Date.now() - startedAt
+    };
+
+    if (result.retriedWithoutCredentials) {
+      shaped.retriedWithoutCredentials = true;
+    }
+
+    if (result.status === "error") {
+      shaped.ok = false;
+      shaped.error = result.error || "webmcp_call_failed";
+      return shaped;
+    }
+
+    var text = result.text === undefined ? "" : String(result.text);
+    var parsed;
+
+    if (!shaped.truncated) {
+      try {
+        parsed = JSON.parse(text);
+      } catch (error) {
+        parsed = undefined;
+      }
+    }
+
+    if (parsed !== undefined) {
+      shaped.body = options.pick ? pickPaths(parsed, options.pick) : parsed;
+    } else {
+      shaped.body = options.raw === true || text.length <= 4000
+        ? text
+        : text.slice(0, 4000) + "…";
+      shaped.bodyIsText = true;
+    }
+
+    if (!shaped.ok) {
+      shaped.error =
+        "HTTP " + result.httpStatus + " " + (result.statusText || "");
+    }
+
+    return shaped;
+  }
+
+  function handleWebmcp(method, params) {
+    var tabId = params.tabId;
+    var options = params.options || {};
+    var entry = webmcpStore.recording(tabId);
+    var tabSite = webmcpSiteForTab(tabId);
+
+    if (entry && tabSite) {
+      webmcpStore.setSite(tabId, tabSite);
+    }
+
+    var site = entry ? entry.site : tabSite;
+
+    if (method === "webmcp.record") {
+      if (!site) {
+        throw new Error(
+          "webmcp_tab_has_no_site: navigate the tab to an http(s) page first."
+        );
+      }
+
+      var installed = runPage("webmcp.install", { tabId: tabId });
+      webmcpStore.record(tabId, site, params.tabIdentity || null);
+      webmcpStore.setOptions(tabId, {
+        probeUnseen: options.probeUnseen === true,
+        probeThirdParty: options.probeThirdParty === true
+      });
+
+      if (installed.pending > 0) {
+        drainWebmcp(tabId);
+      }
+
+      var recordSummary = webmcpStore.summary(site);
+      return {
+        recording: true,
+        site: site,
+        alreadyInstalled: Boolean(installed.already),
+        handoff: installed.handoff || 0,
+        endpoints: recordSummary.endpoints,
+        missedBeforeArm: installed.missedBeforeArm || []
+      };
+    }
+
+    if (method === "webmcp.stop") {
+      var stopped = stopWebmcpRecorder(tabId);
+      return {
+        recording: false,
+        site: site,
+        endpoints: stopped ? stopped.endpoints : 0,
+        captures: stopped ? stopped.captures : 0
+      };
+    }
+
+    if (method === "webmcp.probe") {
+      if (!entry) {
+        throw new Error(
+          "webmcp_probe_requires_recording: call tab.webmcp.record() first."
+        );
+      }
+
+      var probeResult = probeWebmcp(tabId, entry, options);
+      return probeResult;
+    }
+
+    if (entry) {
+      if (entry.options && entry.options.probeUnseen &&
+          (method === "webmcp.listTools" || method === "webmcp.status")) {
+        probeWebmcp(tabId, entry, {
+          thirdParty: entry.options.probeThirdParty
+        });
+      }
+
+      drainWebmcp(tabId);
+    }
+
+    if (method === "webmcp.status") {
+      var pageStatus = runPage("webmcp.status", { tabId: tabId });
+      var statusSummary = webmcpStore.summary(site);
+      return {
+        recording: Boolean(entry),
+        site: site,
+        installed: pageStatus.installed,
+        fetchPatched: pageStatus.fetchPatched,
+        pendingInPage: pageStatus.pending,
+        counters: pageStatus.counters,
+        resources: pageStatus.resources,
+        dropped: pageStatus.dropped,
+        unseen: pageStatus.unseen,
+        endpoints: statusSummary.endpoints,
+        captures: statusSummary.captures
+      };
+    }
+
+    if (method === "webmcp.listTools") {
+      return webmcpStore.listTools(site, { compact: options.compact === true });
+    }
+
+    if (method === "webmcp.describe") {
+      return webmcpStore.describe(site, String(params.name));
+    }
+
+    if (method === "webmcp.callTool") {
+      var name = String(params.name);
+      var endpoint = webmcpStore.endpoint(site, name);
+      var readOnly = isReadOnlyEndpoint(endpoint);
+
+      if (!readOnly && options.confirmed !== true) {
+        throw new Error(
+          "webmcp_confirmation_required: " + endpoint.method + " " +
+          endpoint.templatePath + " changes data. Describe the exact " +
+          "request to the user, obtain confirmation, then pass " +
+          "{ confirmed: true }."
+        );
+      }
+
+      var request = webmcpStore.buildRequest(site, name, params.args || {});
+      var timeoutMs = Math.min(
+        options.timeoutMs === undefined ? 30000 : Number(options.timeoutMs),
+        60000
+      );
+      var maxBytes = Math.min(
+        options.maxBytes === undefined
+          ? WEBMCP_LIMITS.maxToolResultBytes
+          : Number(options.maxBytes),
+        WEBMCP_LIMITS.maxToolResultBytesCeiling
+      );
+      var token = webmcpToken();
+      var startedAt = Date.now();
+
+      runPage("webmcp.execute", {
+        tabId: tabId,
+        token: token,
+        request: request,
+        maxBytes: maxBytes
+      });
+
+      var result = pollWebmcpCall(tabId, token, timeoutMs);
+      return shapeWebmcpResult(name, request, result, options, startedAt);
+    }
+
+    if (method === "webmcp.pageTools") {
+      var toolsToken = webmcpToken();
+      var started = runPage("webmcp.pageTools", {
+        tabId: tabId,
+        token: toolsToken
+      });
+
+      if (started.status === "done") {
+        return { available: started.available, tools: [] };
+      }
+
+      var toolsResult = pollWebmcpCall(tabId, toolsToken, 3000);
+      return {
+        available: Boolean(toolsResult.available),
+        tools: toolsResult.tools || [],
+        error: toolsResult.error
+      };
+    }
+
+    throw new Error("Unsupported Safari operation: " + method);
   }
 
   function restoreControlForNavigation(
@@ -744,7 +1130,13 @@ var run = (function (globalObject) {
 
   function navigationInitialState(tabId) {
     try {
-      return inspectControlledDocument(tabId);
+      var state = inspectControlledDocument(tabId);
+
+      if (state.webmcpPending > 0) {
+        drainWebmcp(tabId);
+      }
+
+      return state;
     } catch (error) {
       return null;
     }
@@ -784,6 +1176,7 @@ var run = (function (globalObject) {
       metadata.id !== identity.id ||
       metadata.url !== identity.url
     ) {
+      webmcpStore.retarget(identity.id, metadata.id);
       completeTabNavigation(identity, metadata);
     }
 
@@ -1025,6 +1418,7 @@ var run = (function (globalObject) {
       resolvedTabs = listTabs();
       resolveTabIdentity(params.tabIdentity, resolvedTabs);
       params.tabId = params.tabIdentity.id;
+      webmcpStore.syncIdentity(params.tabIdentity);
     }
 
     if (params.tabId && method !== "tabs.close") {
@@ -1044,8 +1438,13 @@ var run = (function (globalObject) {
     }
 
     if (method === "tabs.close") {
+      stopWebmcpRecorder(params.tabId);
       closeTab(params.tabId);
       return null;
+    }
+
+    if (method.indexOf("webmcp.") === 0) {
+      return handleWebmcp(method, params);
     }
 
     if (method === "page.navigate") {
@@ -1056,6 +1455,7 @@ var run = (function (globalObject) {
       }
 
       var initialState = inspectControlledDocument(params.tabId);
+      drainWebmcp(params.tabId);
       findTab(params.tabId).tab.url = url;
       retargetTabIdentity(params.tabIdentity, url);
 
@@ -1797,9 +2197,69 @@ var run = (function (globalObject) {
     controlLifecycle.activate(metadata.id);
   };
 
+  function SafariWebmcp(tabIdentity) {
+    this.tabIdentity = tabIdentity;
+  }
+
+  SafariWebmcp.prototype.record = function (options) {
+    return callSafari("webmcp.record", {
+      tabIdentity: this.tabIdentity,
+      options: options || {}
+    });
+  };
+
+  SafariWebmcp.prototype.stop = function () {
+    return callSafari("webmcp.stop", {
+      tabIdentity: this.tabIdentity
+    });
+  };
+
+  SafariWebmcp.prototype.status = function () {
+    return callSafari("webmcp.status", {
+      tabIdentity: this.tabIdentity
+    });
+  };
+
+  SafariWebmcp.prototype.listTools = function (options) {
+    return callSafari("webmcp.listTools", {
+      tabIdentity: this.tabIdentity,
+      options: options || {}
+    });
+  };
+
+  SafariWebmcp.prototype.describe = function (name) {
+    return callSafari("webmcp.describe", {
+      tabIdentity: this.tabIdentity,
+      name: name
+    });
+  };
+
+  SafariWebmcp.prototype.callTool = function (name, args, options) {
+    return callSafari("webmcp.callTool", {
+      tabIdentity: this.tabIdentity,
+      name: name,
+      args: args || {},
+      options: options || {}
+    });
+  };
+
+  SafariWebmcp.prototype.pageTools = function () {
+    return callSafari("webmcp.pageTools", {
+      tabIdentity: this.tabIdentity
+    });
+  };
+
+  SafariWebmcp.prototype.probe = function (options) {
+    return callSafari("webmcp.probe", {
+      tabIdentity: this.tabIdentity,
+      options: options || {}
+    });
+  };
+
   function SafariTab(metadata) {
     this._identity = createTabIdentity(metadata);
     this.playwright = new SafariPlaywright(this._identity);
+    this.webmcp = new SafariWebmcp(this._identity);
     Object.defineProperty(this, "id", {
       enumerable: true,
       get: function () {
@@ -1882,9 +2342,37 @@ var run = (function (globalObject) {
     doctor: doctor,
     documentation: browserDocumentation,
     release: function () {
+      stopAllWebmcpRecorders();
       controlLifecycle.release();
       return { released: true };
     },
+    webmcp: Object.freeze({
+      sites: function () {
+        return webmcpStore.sites();
+      },
+      export: function (site) {
+        return webmcpStore.exportSite(String(site));
+      },
+      setDescription: function (site, name, text) {
+        return webmcpStore.setDescription(
+          String(site),
+          String(name),
+          String(text)
+        );
+      },
+      setReadOnly: function (site, name, readOnly) {
+        return webmcpStore.setReadOnly(
+          String(site),
+          String(name),
+          readOnly !== false
+        );
+      },
+      clear: function (site) {
+        return webmcpStore.clear(
+          site === undefined || site === null ? undefined : String(site)
+        );
+      }
+    }),
     tabs: Object.freeze({
       list: function () {
         return callSafari("tabs.list", {});
@@ -2283,6 +2771,9 @@ var run = (function (globalObject) {
   var baselineGlobals = Object.getOwnPropertyNames(globalObject);
 
   function resetRepl() {
+    stopAllWebmcpRecorders();
+    webmcpStore.reset();
+
     var names = Object.getOwnPropertyNames(globalObject);
 
     for (var index = 0; index < names.length; index++) {

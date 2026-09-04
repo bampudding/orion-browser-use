@@ -514,3 +514,22 @@ test("ships without a Safari app or Web Extension", async () => {
   const packageJson = await readRepositoryJson("package.json");
   assert.deepEqual(packageJson.dependencies ?? {}, {});
 });
+
+test("runtime guide documents Site API Tools recording and replay rules", async () => {
+  const documentation = await readFile(
+    new URL(
+      "../plugins/safari-browser-use/server/src/documentation.md",
+      import.meta.url
+    ),
+    "utf8"
+  );
+
+  assert.match(documentation, /## Site API Tools \(WebMCP\)/);
+  assert.match(documentation, /tab\.webmcp\.record\(\)/);
+  assert.match(documentation, /tab\.webmcp\.callTool\(/);
+  assert.match(documentation, /never applies to user tabs/);
+  assert.match(documentation, /\{ confirmed: true \}/);
+  assert.match(documentation, /«redacted»/);
+  assert.match(documentation, /browser\.webmcp\.export\(site\)/);
+  assert.match(documentation, /untrusted web content/);
+});

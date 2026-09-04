@@ -1613,7 +1613,12 @@ export function runPageOperation(
       documentId: pageDocumentId(),
       navigationPending: pageNavigationPending(),
       readyState: document.readyState,
-      url: window.location.href
+      url: window.location.href,
+      webmcpPending: Array.isArray(
+        window.__safari_browser_use_webmcp_captures__
+      )
+        ? window.__safari_browser_use_webmcp_captures__.length
+        : 0
     };
   }
 
