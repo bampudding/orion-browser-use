@@ -9,7 +9,6 @@ import {
   inferSchema,
   isSensitiveName,
   matchSnapshot,
-  matchesNoiseSeed,
   mergeCapture,
   applySkeleton,
   dynamicToolName,
@@ -70,10 +69,9 @@ test("site keys group subdomains and respect second-level public suffixes", () =
   assert.equal(siteKeyFor("127.0.0.1"), "127.0.0.1");
 });
 
-test("capture filters drop static assets, trackers, and non-JSON failures", () => {
+test("capture filters drop static assets and non-JSON failures", () => {
   assert.equal(shouldCapturePre("GET", parseUrl("https://a.com/app.js")), false);
   assert.equal(shouldCapturePre("GET", parseUrl("https://www.google-analytics.com/collect")), true);
-  assert.equal(matchesNoiseSeed(parseUrl("https://www.google-analytics.com/collect")), true);
   assert.equal(shouldCapturePre("OPTIONS", parseUrl("https://a.com/api")), false);
   assert.equal(shouldCapturePre("GET", parseUrl("https://a.com/api/items")), true);
   assert.equal(shouldKeep(capture({ status: 404 })), false);
@@ -310,11 +308,9 @@ test("recording entries follow the tab identity and the tab's current site", () 
   assert.deepEqual(store.sites().map(site => site.site).sort(), ["example.com", "other.org"]);
 });
 
-test("telemetry is a scoring prior, not a filter, and JSON bodies are sniffed", () => {
+test("nothing is filtered by host or path; JSON bodies are sniffed", () => {
   assert.equal(shouldCapturePre("POST", parseUrl("https://zhihu-web-analytics.zhihu.com/api/v2/za/logs/batch")), true);
-  assert.equal(matchesNoiseSeed(parseUrl("https://zhihu-web-analytics.zhihu.com/api/v2/za/logs/batch")), true);
-  assert.equal(matchesNoiseSeed(parseUrl("https://x.com/i/api/1.1/promoted_content/log.json")), true);
-  assert.equal(matchesNoiseSeed(parseUrl("https://api.example.com/v1/catalog/items")), false);
+  assert.equal(shouldCapturePre("POST", parseUrl("https://x.com/i/api/1.1/promoted_content/log.json")), true);
   assert.equal(shouldKeep({ status: 200, responseContentType: undefined, responseBody: ' \n{"a":1}' }), true);
   assert.equal(shouldKeep({ status: 200, responseContentType: "text/plain", responseBody: "[1,2]" }), true);
   assert.equal(shouldKeep({ status: 200, responseContentType: undefined, responseBody: "<html>" }), false);
@@ -336,7 +332,7 @@ function feedCapture(overrides = {}) {
   });
 }
 
-test("endpoints are scored from their responses, telemetry lands in the noise tier", () => {
+test("endpoints are scored from their responses alone; acknowledgements land in the noise tier", () => {
   const site = emptySite("example.com");
   mergeCapture(site, feedCapture());
   mergeCapture(site, capture({

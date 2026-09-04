@@ -3418,46 +3418,6 @@ const STATIC_EXTENSIONS = new Set([
   "pdf", "zip", "wasm", "html", "htm", "xml", "txt"
 ]);
 
-const TRACKER_HOSTS = [
-  "google-analytics.com",
-  "analytics.google.com",
-  "googletagmanager.com",
-  "doubleclick.net",
-  "sentry.io",
-  "segment.io",
-  "segment.com",
-  "mixpanel.com",
-  "hotjar.com",
-  "clarity.ms",
-  "browser-intake-datadoghq.com",
-  "datadoghq.com",
-  "newrelic.com",
-  "nr-data.net",
-  "bugsnag.com",
-  "amplitude.com",
-  "posthog.com/e",
-  "facebook.net",
-  "scorecardresearch.com",
-  "mcs.snssdk.com",
-  "mon.zijieapi.com",
-  "fundingchoicesmessages.google.com",
-  "apm-fe.xiaohongshu.com",
-  "t2.xiaohongshu.com",
-  "zhihu-web-analytics.zhihu.com",
-  "prodregistryv2.org",
-  "pdscrb.com",
-  "transcend-cdn.com",
-  "px.ads.linkedin.com",
-  "veta.naver.com",
-  "statsig.com",
-  "launchdarkly.com",
-  "optimizely.com",
-  "intercom.io",
-  "intercomcdn.com",
-  "fullstory.com",
-  "logrocket.com",
-  "browser-intake-us5-datadoghq.com"
-];
 
 // Second-level public suffixes where "last two labels" would merge
 // unrelated sites. Kept deliberately small; extend as needed.
@@ -3561,17 +3521,6 @@ function siteKeyFor(hostname) {
   return lastTwo;
 }
 
-// Telemetry endpoints are never useful tools; drop them by shape as well
-// as by host so first-party analytics (zhihu-web-analytics, x.com
-// promoted_content/log.json, ...) stay out of the catalog.
-const NOISE_HOST_RE = /(^|[.-])(analytics|telemetry|metrics|beacon|logs?|stats?|tracking|sentry|apm|rum|mon|mcs)[.-]/i;
-const NOISE_PATH_RE =
-  /\/(za\/)?logs?(\/|\.json$|$)|\/log\.json$|\/collect(\/|$)|\/track(ing)?(\/|$)|\/beacon|\/metrics?(\/|$)|\/telemetry|\/analytics|\/pixel(\/|$)|\/report(\/|\.json|$)|\/rum(\/|$)|\/perf(\/|$)|\/monitor(\/|$)|\/rgstr(\/|$)|\/web_logger\/|\/logger\/|\/metalytics(\/|$)|\/initialize(\/|$)|\/sdk\/|\/heartbeat(\/|$)|\/ping(\/|$)/i;
-
-function isNoiseUrl(url) {
-  return NOISE_HOST_RE.test(url.hostname + ".") || NOISE_PATH_RE.test(url.pathname);
-}
-
 function sniffsAsJson(text) {
   if (typeof text !== "string") {
     return false;
@@ -3579,17 +3528,6 @@ function sniffsAsJson(text) {
 
   const head = text.slice(0, 64).replace(/^﻿/, "").trimStart();
   return head.startsWith("{") || head.startsWith("[");
-}
-
-// Known telemetry vendors. Used only as a scoring prior, never as a hard
-// filter: the catalog learns what is noise from the responses themselves.
-function matchesNoiseSeed(url) {
-  const hostAndPath = url.hostname + url.pathname;
-  return TRACKER_HOSTS.some(tracker =>
-    url.hostname === tracker ||
-    url.hostname.endsWith("." + tracker) ||
-    hostAndPath.startsWith(tracker)
-  ) || isNoiseUrl(url);
 }
 
 function shouldCapturePre(method, url) {
@@ -4339,9 +4277,9 @@ function isFirstParty(site, host) {
 
 // --- Usefulness scoring ------------------------------------------------
 //
-// Instead of a hard-coded blocklist, every endpoint is scored from what it
-// actually returned: data-bearing JSON scores high, empty or constant
-// acknowledgements score low. Known telemetry vendors only add a prior.
+// There is no blocklist. Every endpoint is scored from what it actually
+// returned: data-bearing JSON scores high, empty or constant
+// acknowledgements (telemetry, heartbeats) score low.
 
 function parseSample(endpoint) {
   const sample = endpoint.samples[endpoint.samples.length - 1];
@@ -4440,15 +4378,6 @@ function scoreEndpoint(site, endpoint) {
   if (!readOnly && endpoint.lastBody !== undefined && size < 200) {
     score -= 1;
     reasons.push("fire-and-forget");
-  }
-
-  try {
-    if (matchesNoiseSeed(parseUrl(endpoint.origin + endpoint.templatePath))) {
-      score -= 2;
-      reasons.push("telemetry-vendor");
-    }
-  } catch (error) {
-    // unparsable origin
   }
 
   // A third-party ".json" file with no parameters is a static asset
