@@ -53,6 +53,7 @@ export function runPageOperation(
     const existingStyle = document.getElementById(controlStyleId);
 
     if (existingIndicator && existingStyle) {
+      existingIndicator.style.pointerEvents = "auto";
       window.clearTimeout(window[controlTimerKey]);
       window[controlTimerKey] = window.setTimeout(
         hideControlIndicator,
@@ -93,7 +94,7 @@ export function runPageOperation(
       position: "fixed",
       inset: "0",
       boxSizing: "border-box",
-      pointerEvents: "none",
+      pointerEvents: "auto",
       zIndex: "2147483647",
       border: "3px solid rgba(194, 184, 38, 0.98)",
       outline: "1px solid rgba(255, 252, 210, 0.92)",
@@ -140,6 +141,21 @@ export function runPageOperation(
     );
 
     return { visible: true };
+  }
+
+  function setControlPassthrough(options) {
+    const indicator = document.querySelector(
+      `[${controlIndicatorAttribute}]`
+    );
+    const passthrough = options.enabled === true;
+
+    if (!indicator) {
+      return { passthrough, visible: false };
+    }
+
+    indicator.style.pointerEvents = passthrough ? "none" : "auto";
+
+    return { passthrough, visible: true };
   }
 
   function controlLeaseMs(options) {
@@ -1326,6 +1342,36 @@ export function runPageOperation(
     };
   }
 
+  function insideControlIndicator(element) {
+    return Boolean(
+      element &&
+      element.closest &&
+      element.closest(`[${controlIndicatorAttribute}]`)
+    );
+  }
+
+  function hitTestTarget(x, y) {
+    const direct = document.elementFromPoint
+      ? document.elementFromPoint(x, y)
+      : null;
+
+    if (direct && !insideControlIndicator(direct)) {
+      return direct;
+    }
+
+    const stack = document.elementsFromPoint
+      ? document.elementsFromPoint(x, y)
+      : [];
+
+    for (const element of stack) {
+      if (!insideControlIndicator(element)) {
+        return element;
+      }
+    }
+
+    return document.documentElement || document.body;
+  }
+
   function dispatchMouseEvent(params) {
     const x = Number(params.x);
     const y = Number(params.y);
@@ -1338,10 +1384,7 @@ export function runPageOperation(
     const button = Number(params.button ?? 0);
     const buttons = Number(params.buttons ?? 0);
     const pointerId = Number(params.pointerId ?? 1);
-    const target =
-      (document.elementFromPoint && document.elementFromPoint(x, y)) ||
-      document.documentElement ||
-      document.body;
+    const target = hitTestTarget(x, y);
 
     // Glide the fake cursor along the coordinate path so a person
     // watching sees the pointer travel to where the AI is acting.
@@ -1632,6 +1675,10 @@ export function runPageOperation(
 
   if (method === "control.show") {
     return showControlIndicator(params);
+  }
+
+  if (method === "control.passthrough") {
+    return setControlPassthrough(params);
   }
 
   if (method === "control.hide") {

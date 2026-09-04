@@ -1,8 +1,7 @@
 {
   "compilerOptions": {
-    "baseUrl": ".",
     "paths": {
-      "@isomorphic/*": ["packages/isomorphic/*"]
+      "@isomorphic/*": ["./packages/isomorphic/*"]
     }
   }
 }

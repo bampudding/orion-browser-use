@@ -1,6 +1,6 @@
 {
   "name": "safari-browser-use",
-  "version": "0.1.2-20260902",
+  "version": "0.1.2-20260904",
   "description": "Control the user's existing Safari 26 session with agent-written JavaScript.",
   "author": {
     "name": "CitroLabs",
@@ -8,5 +8,5 @@
   },
   "repository": "https://github.com/citrolabs/safari-browser-use",
   "skills": "./skills/",
-  "mcpServers": "./claude.mcp.json"
+  "mcpServers": "./.mcp.json"
 }

@@ -109,9 +109,16 @@ tabs again and confirm the intended tab instead of guessing.
 
 ## Tab Cleanup
 
-Selecting or operating a tab adds a non-interactive perimeter glow and a visible
-fake cursor to the controlled page. They start, refresh, and stop together as
-one control indicator.
+Selecting or operating a tab adds a perimeter glow and a visible fake cursor to
+the controlled page. They start, refresh, and stop together as one control
+indicator.
+
+The indicator also blocks the mouse: while it is up, the person watching cannot
+click, select, or right-click the page content behind it. Their keyboard still
+works, and Safari's own toolbar, tabs, and window controls stay live, so this
+prevents collisions rather than enforcing a boundary. A page can remove the
+indicator, so never treat it as a security control. `browser.release()` restores
+the mouse.
 
 When a navigation-capable operation replaces the page document, the same browser
 call waits for the new document and restores the control indicator before it
