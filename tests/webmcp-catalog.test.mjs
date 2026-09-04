@@ -8,7 +8,16 @@ import {
   fillTemplate,
   inferSchema,
   isSensitiveName,
+  matchSnapshot,
+  matchesNoiseSeed,
   mergeCapture,
+  applySkeleton,
+  dynamicToolName,
+  formatSuggestions,
+  scoreEndpoint,
+  skeletonFor,
+  snapshotTexts,
+  toMcpTool,
   mergeSchemas,
   parseUrl,
   pickPaths,
@@ -63,7 +72,8 @@ test("site keys group subdomains and respect second-level public suffixes", () =
 
 test("capture filters drop static assets, trackers, and non-JSON failures", () => {
   assert.equal(shouldCapturePre("GET", parseUrl("https://a.com/app.js")), false);
-  assert.equal(shouldCapturePre("GET", parseUrl("https://www.google-analytics.com/collect")), false);
+  assert.equal(shouldCapturePre("GET", parseUrl("https://www.google-analytics.com/collect")), true);
+  assert.equal(matchesNoiseSeed(parseUrl("https://www.google-analytics.com/collect")), true);
   assert.equal(shouldCapturePre("OPTIONS", parseUrl("https://a.com/api")), false);
   assert.equal(shouldCapturePre("GET", parseUrl("https://a.com/api/items")), true);
   assert.equal(shouldKeep(capture({ status: 404 })), false);
@@ -234,7 +244,7 @@ test("first-party endpoints sort ahead of third-party ones", () => {
     capture({ url: "https://api.example.com/v1/feed", timestamp: 1, credentials: "same-origin" })
   ]);
 
-  const tools = store.listTools("example.com", { compact: true });
+  const tools = store.listTools("example.com", { compact: true, all: true });
   assert.deepEqual(tools.map(tool => [tool.host, tool.firstParty]), [
     ["api.example.com", true],
     ["cdn.vendor.net", false]
@@ -269,7 +279,7 @@ test("GraphQL query documents over POST are read-only, overrides are honoured", 
   ]);
 
   const tools = Object.fromEntries(
-    store.listTools("example.com").map(tool => [tool.name, tool])
+    store.listTools("example.com", { all: true }).map(tool => [tool.name, tool])
   );
   assert.equal(tools.post_graphql_feed.annotations.readOnlyHint, true);
   assert.equal(tools.post_graphql_like.annotations.readOnlyHint, false);
@@ -300,11 +310,141 @@ test("recording entries follow the tab identity and the tab's current site", () 
   assert.deepEqual(store.sites().map(site => site.site).sort(), ["example.com", "other.org"]);
 });
 
-test("telemetry endpoints are filtered and JSON bodies are sniffed", () => {
-  assert.equal(shouldCapturePre("POST", parseUrl("https://zhihu-web-analytics.zhihu.com/api/v2/za/logs/batch")), false);
-  assert.equal(shouldCapturePre("POST", parseUrl("https://x.com/i/api/1.1/promoted_content/log.json")), false);
-  assert.equal(shouldCapturePre("GET", parseUrl("https://api.example.com/v1/catalog/items")), true);
+test("telemetry is a scoring prior, not a filter, and JSON bodies are sniffed", () => {
+  assert.equal(shouldCapturePre("POST", parseUrl("https://zhihu-web-analytics.zhihu.com/api/v2/za/logs/batch")), true);
+  assert.equal(matchesNoiseSeed(parseUrl("https://zhihu-web-analytics.zhihu.com/api/v2/za/logs/batch")), true);
+  assert.equal(matchesNoiseSeed(parseUrl("https://x.com/i/api/1.1/promoted_content/log.json")), true);
+  assert.equal(matchesNoiseSeed(parseUrl("https://api.example.com/v1/catalog/items")), false);
   assert.equal(shouldKeep({ status: 200, responseContentType: undefined, responseBody: ' \n{"a":1}' }), true);
   assert.equal(shouldKeep({ status: 200, responseContentType: "text/plain", responseBody: "[1,2]" }), true);
   assert.equal(shouldKeep({ status: 200, responseContentType: undefined, responseBody: "<html>" }), false);
+});
+
+
+function feedCapture(overrides = {}) {
+  return capture({
+    url: "https://api.example.com/v1/feed?page=1",
+    responseBody: JSON.stringify({
+      items: [
+        { id: 1, title: "Safari 26 ships WebMCP recorder" },
+        { id: 2, title: "How JXA lost its URL global" },
+        { id: 3, title: "Probing unseen endpoints" }
+      ],
+      total: 3
+    }),
+    ...overrides
+  });
+}
+
+test("endpoints are scored from their responses, telemetry lands in the noise tier", () => {
+  const site = emptySite("example.com");
+  mergeCapture(site, feedCapture());
+  mergeCapture(site, capture({
+    method: "POST",
+    url: "https://analytics.example.com/collect",
+    requestContentType: "application/json",
+    requestBody: "{\"event\":\"view\"}",
+    responseBody: "{}"
+  }));
+  mergeCapture(site, capture({
+    url: "https://api.example.com/v1/config",
+    responseBody: JSON.stringify({ a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8, i: 9 })
+  }));
+
+  const byName = Object.fromEntries(
+    Object.values(site.endpoints).map(e => [e.toolName, scoreEndpoint("example.com", e)])
+  );
+  assert.equal(byName.get_v1_feed.tier, "data");
+  assert.ok(byName.get_v1_feed.reasons.includes("list(3)"));
+  assert.equal(byName.post_collect.tier, "noise");
+  assert.equal(byName.get_v1_config.tier, "config");
+
+  const store = createWebmcpStore(() => 1);
+  store.mergeCaptures("example.com", [feedCapture(), capture({
+    method: "POST", url: "https://analytics.example.com/collect",
+    requestContentType: "application/json", requestBody: "{}", responseBody: "{}"
+  })]);
+  assert.deepEqual(store.listTools("example.com", { compact: true }).map(t => t.name), ["get_v1_feed"]);
+  assert.equal(store.listTools("example.com", { compact: true, all: true }).length, 2);
+  store.setTier("example.com", "post_collect", "data");
+  assert.equal(store.listTools("example.com", { compact: true }).length, 2);
+});
+
+test("snapshot texts are matched against response samples", () => {
+  const store = createWebmcpStore(() => 1);
+  store.mergeCaptures("example.com", [feedCapture(), capture({
+    url: "https://api.example.com/v1/me",
+    responseBody: JSON.stringify({ name: "Jack", plan: "pro" })
+  })]);
+  const snapshot = [
+    "- main:",
+    '  - heading "Latest"',
+    '  - link "Safari 26 ships WebMCP recorder"',
+    '  - link "How JXA lost its URL global"',
+    "  - text: Probing unseen endpoints",
+    '  - button "Load more"'
+  ].join("\n");
+
+  assert.deepEqual(snapshotTexts(snapshot).sort(), [
+    "How JXA lost its URL global", "Latest", "Load more",
+    "Probing unseen endpoints", "Safari 26 ships WebMCP recorder"
+  ]);
+  const suggestions = store.suggest("example.com", snapshot);
+  assert.equal(suggestions.length, 1);
+  assert.equal(suggestions[0].name, "get_v1_feed");
+  assert.equal(suggestions[0].matched, 3);
+  assert.equal(suggestions[0].items, 3);
+  assert.match(formatSuggestions(suggestions), /# webmcp: get_v1_feed .*matched 3\/5 visible texts, returns 3 items/);
+  assert.equal(formatSuggestions([]), "");
+  assert.deepEqual(matchSnapshot("example.com", [], snapshot), []);
+});
+
+test("site memory keeps endpoint skeletons without credentials or samples", () => {
+  const store = createWebmcpStore(() => 42);
+  store.mergeCaptures("example.com", [feedCapture({
+    url: "https://api.example.com/v1/feed?page=2&token=SECRET&limit=10"
+  })]);
+  const skeleton = store.skeleton("example.com");
+  const text = JSON.stringify(skeleton);
+
+  assert.equal(skeleton.format, "webmcp-site-memory");
+  assert.equal(skeleton.endpoints.length, 1);
+  assert.equal(skeleton.endpoints[0].probeUrl, "https://api.example.com/v1/feed?page=2&limit=10");
+  assert.equal(text.includes("SECRET"), false);
+  assert.equal(text.includes("secret-token"), false);
+  assert.equal(text.includes("Safari 26 ships"), false);
+  assert.equal(skeleton.endpoints[0].sessions, 1);
+
+  const fresh = createWebmcpStore(() => 43);
+  assert.equal(fresh.remember("example.com", skeleton), 1);
+  assert.deepEqual(fresh.rememberedProbeUrls("example.com"), [
+    "https://api.example.com/v1/feed?page=2&limit=10"
+  ]);
+  assert.deepEqual(fresh.listTools("example.com"), []);
+  assert.equal(fresh.listTools("example.com", { includeRemembered: true, compact: true })[0].remembered, true);
+  assert.equal(fresh.skeleton("example.com").endpoints[0].sessions, 1);
+
+  fresh.mergeCaptures("example.com", [feedCapture()]);
+  assert.equal(fresh.rememberedProbeUrls("example.com").length, 0);
+  assert.equal(fresh.skeleton("example.com").endpoints[0].sessions, 2);
+  assert.equal(applySkeleton(emptySite("x"), { format: "other" }), 0);
+});
+
+test("data-bearing read endpoints become MCP tools with stable names", () => {
+  const store = createWebmcpStore(() => 1);
+  store.mergeCaptures("shop.example.co.uk", [
+    feedCapture({ url: "https://api.shop.example.co.uk/v1/orders/123/items?page=1" }),
+    capture({ method: "POST", url: "https://api.shop.example.co.uk/v1/orders", requestContentType: "application/json", requestBody: "{\"x\":1}", responseBody: JSON.stringify({ items: [1, 2, 3] }) })
+  ]);
+  const tools = store.mcpTools();
+
+  assert.equal(tools.length, 1);
+  assert.equal(tools[0].tool.name, "web__shop_example_co_uk__get_v1_orders_items");
+  assert.equal(tools[0].tool.annotations.readOnlyHint, true);
+  assert.ok(tools[0].tool.inputSchema.properties._pick);
+  assert.deepEqual(tools[0].tool.inputSchema.required, ["orderId", "page"]);
+  assert.ok(dynamicToolName("a.b", "x".repeat(100)).length <= 64);
+  assert.match(store.exposureSignature(), /web__shop_example_co_uk__get_v1_orders_items/);
+  const endpoint = store.endpoint("shop.example.co.uk", "get_v1_orders_items");
+  assert.equal(toMcpTool("shop.example.co.uk", endpoint).description.includes("untrusted"), true);
 });

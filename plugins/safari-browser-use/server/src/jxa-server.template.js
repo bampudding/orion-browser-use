@@ -725,6 +725,288 @@ var run = (function (globalObject) {
 
   var webmcpStore = createWebmcpStore();
 
+  // Automatic behaviour. Every switch can be turned off with
+  // browser.webmcp.auto({ ... }); defaults favour learning without asking.
+  var webmcpAuto = {
+    record: true,   // record every task tab opened with browser.tabs.new()
+    probe: true,    // probe unseen first-party GET URLs once per document
+    suggest: true,  // annotate domSnapshot() with the endpoints behind it
+    expose: true,   // register data-bearing read endpoints as MCP tools
+    remember: true  // keep a credential-free skeleton per site on disk
+  };
+  var webmcpAutoIdentities = [];
+  var webmcpExposed = {};
+  var webmcpExposureSignature = "";
+  var webmcpMemorySavedAt = {};
+  var mcpInitialized = false;
+
+  function markAutoRecordIdentity(identity) {
+    if (!identity || webmcpAutoIdentities.indexOf(identity) !== -1) {
+      return;
+    }
+
+    webmcpAutoIdentities.push(identity);
+
+    if (webmcpAutoIdentities.length > 200) {
+      webmcpAutoIdentities.shift();
+    }
+  }
+
+  function webmcpMemoryDirectory() {
+    return ObjC.unwrap(foundation.NSHomeDirectory()) +
+      "/Library/Application Support/safari-browser-use/webmcp";
+  }
+
+  function webmcpMemoryPath(site) {
+    var name = String(site).toLowerCase().replace(/[^a-z0-9.-]+/g, "_");
+    return webmcpMemoryDirectory() + "/" + name + ".json";
+  }
+
+  function readTextFile(path) {
+    var text = foundation.NSString.stringWithContentsOfFileEncodingError(
+      path,
+      foundation.NSUTF8StringEncoding,
+      null
+    );
+
+    return text.isNil() ? null : ObjC.unwrap(text);
+  }
+
+  function writeTextFile(path, text) {
+    var directory = path.slice(0, path.lastIndexOf("/"));
+    foundation.NSFileManager.defaultManager
+      .createDirectoryAtPathWithIntermediateDirectoriesAttributesError(
+        directory,
+        true,
+        $(),
+        null
+      );
+    foundation.NSString.stringWithString(text)
+      .writeToFileAtomicallyEncodingError(
+        path,
+        true,
+        foundation.NSUTF8StringEncoding,
+        null
+      );
+  }
+
+  function loadSiteMemory(site) {
+    if (!webmcpAuto.remember) {
+      return 0;
+    }
+
+    try {
+      var raw = readTextFile(webmcpMemoryPath(site));
+      return raw ? webmcpStore.remember(site, JSON.parse(raw)) : 0;
+    } catch (error) {
+      return 0;
+    }
+  }
+
+  function saveSiteMemory(site, force) {
+    if (!webmcpAuto.remember) {
+      return false;
+    }
+
+    var last = webmcpMemorySavedAt[site] || 0;
+
+    if (!force && Date.now() - last < 5000) {
+      return false;
+    }
+
+    try {
+      var skeleton = webmcpStore.skeleton(site);
+
+      if (skeleton.endpoints.length === 0) {
+        return false;
+      }
+
+      writeTextFile(webmcpMemoryPath(site), JSON.stringify(skeleton));
+      webmcpMemorySavedAt[site] = Date.now();
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  function forgetSiteMemory(site) {
+    try {
+      foundation.NSFileManager.defaultManager.removeItemAtPathError(
+        webmcpMemoryPath(site),
+        null
+      );
+    } catch (error) {
+      // nothing to forget
+    }
+
+    delete webmcpMemorySavedAt[site];
+  }
+
+  // Keep the dynamic MCP tool set in step with the catalog and tell the
+  // client when it changed.
+  function refreshWebmcpExposure() {
+    if (!webmcpAuto.expose) {
+      if (Object.keys(webmcpExposed).length > 0) {
+        webmcpExposed = {};
+        webmcpExposureSignature = "";
+
+        if (mcpInitialized) {
+          writeLine({
+            jsonrpc: "2.0",
+            method: "notifications/tools/list_changed"
+          });
+        }
+      }
+
+      return;
+    }
+
+    var signature = webmcpStore.exposureSignature();
+
+    if (signature === webmcpExposureSignature) {
+      return;
+    }
+
+    webmcpExposureSignature = signature;
+    webmcpExposed = {};
+    var entries = webmcpStore.mcpTools();
+
+    for (var index = 0; index < entries.length; index++) {
+      webmcpExposed[entries[index].tool.name] = entries[index];
+    }
+
+    if (mcpInitialized) {
+      writeLine({
+        jsonrpc: "2.0",
+        method: "notifications/tools/list_changed"
+      });
+    }
+  }
+
+  function dynamicToolDefinitions() {
+    var names = Object.keys(webmcpExposed);
+    var definitions = [];
+
+    for (var index = 0; index < names.length; index++) {
+      definitions.push(webmcpExposed[names[index]].tool);
+    }
+
+    return definitions;
+  }
+
+  function recordingTabForSite(site) {
+    var tabIds = webmcpStore.recordingTabIds();
+    var match = null;
+
+    for (var index = 0; index < tabIds.length; index++) {
+      var entry = webmcpStore.recording(tabIds[index]);
+
+      if (entry && entry.site === site) {
+        match = tabIds[index];
+      }
+    }
+
+    return match;
+  }
+
+  function startWebmcpRecording(tabId, site, identity, options) {
+    options = options || {};
+    var installed = runPage("webmcp.install", { tabId: tabId });
+    webmcpStore.record(tabId, site, identity || null);
+    webmcpStore.setOptions(tabId, {
+      probeUnseen: options.probeUnseen === true,
+      probeThirdParty: options.probeThirdParty === true
+    });
+    var remembered = loadSiteMemory(site);
+
+    if (installed.pending > 0) {
+      drainWebmcp(tabId);
+    }
+
+    var summary = webmcpStore.summary(site);
+    return {
+      recording: true,
+      site: site,
+      alreadyInstalled: Boolean(installed.already),
+      handoff: installed.handoff || 0,
+      remembered: remembered,
+      endpoints: summary.endpoints,
+      missedBeforeArm: installed.missedBeforeArm || []
+    };
+  }
+
+  function maybeAutoRecord(identity, tabId) {
+    if (
+      !webmcpAuto.record ||
+      !identity ||
+      webmcpAutoIdentities.indexOf(identity) === -1 ||
+      webmcpStore.recording(tabId)
+    ) {
+      return;
+    }
+
+    var site = webmcpSiteForTab(tabId);
+
+    if (!site) {
+      return;
+    }
+
+    try {
+      startWebmcpRecording(tabId, site, identity, {});
+    } catch (error) {
+      // The page may still be loading; the next operation retries.
+    }
+  }
+
+  // Probe once per document: unseen first-party GET URLs plus GET
+  // endpoints remembered from earlier sessions.
+  function maybeAutoProbe(tabId, entry, pageStatus) {
+    if (!webmcpAuto.probe || !entry) {
+      return null;
+    }
+
+    var status = pageStatus || runPage("webmcp.status", { tabId: tabId });
+
+    if (
+      !status.documentId ||
+      status.documentId === entry.probedDocumentId ||
+      status.readyState === "loading"
+    ) {
+      return null;
+    }
+
+    entry.probedDocumentId = status.documentId;
+
+    try {
+      var result = probeWebmcp(tabId, entry, {
+        limit: 20,
+        timeoutMs: 8000,
+        extraUrls: webmcpStore.rememberedProbeUrls(entry.site)
+      });
+      return result;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function annotateSnapshot(tabId, snapshot) {
+    var entry = webmcpStore.recording(tabId);
+
+    if (!webmcpAuto.suggest || !entry || typeof snapshot !== "string") {
+      return snapshot;
+    }
+
+    try {
+      maybeAutoProbe(tabId, entry, null);
+      drainWebmcp(tabId);
+      var suggestions = webmcpStore.suggest(entry.site, snapshot);
+      var text = formatSuggestions(suggestions);
+      return text ? snapshot + "\n" + text : snapshot;
+    } catch (error) {
+      return snapshot;
+    }
+  }
+
   function webmcpSiteForTab(tabId) {
     var tabUrl = findTab(tabId).tab.url();
     var hostname = "";
@@ -754,7 +1036,14 @@ var run = (function (globalObject) {
     }
 
     var drained = runPage("webmcp.drain", { tabId: tabId });
-    return webmcpStore.mergeCaptures(entry.site, drained.captures);
+    var merged = webmcpStore.mergeCaptures(entry.site, drained.captures);
+
+    if (merged > 0) {
+      saveSiteMemory(entry.site, false);
+      refreshWebmcpExposure();
+    }
+
+    return merged;
   }
 
   function ensureWebmcpRecorder(tabId) {
@@ -797,6 +1086,7 @@ var run = (function (globalObject) {
     }
 
     webmcpStore.stop(tabId);
+    saveSiteMemory(entry.site, true);
     return webmcpStore.summary(entry.site);
   }
 
@@ -849,6 +1139,7 @@ var run = (function (globalObject) {
       token: token,
       site: entry.site,
       urls: Array.isArray(options.urls) ? options.urls : undefined,
+      extraUrls: Array.isArray(options.extraUrls) ? options.extraUrls : undefined,
       limit: options.limit,
       thirdParty: options.thirdParty === true
     });
@@ -870,6 +1161,11 @@ var run = (function (globalObject) {
       if (result.results[index].kept) {
         kept += 1;
       }
+    }
+
+    if (kept > 0) {
+      saveSiteMemory(entry.site, true);
+      refreshWebmcpExposure();
     }
 
     return {
@@ -959,26 +1255,12 @@ var run = (function (globalObject) {
         );
       }
 
-      var installed = runPage("webmcp.install", { tabId: tabId });
-      webmcpStore.record(tabId, site, params.tabIdentity || null);
-      webmcpStore.setOptions(tabId, {
-        probeUnseen: options.probeUnseen === true,
-        probeThirdParty: options.probeThirdParty === true
-      });
-
-      if (installed.pending > 0) {
-        drainWebmcp(tabId);
-      }
-
-      var recordSummary = webmcpStore.summary(site);
-      return {
-        recording: true,
-        site: site,
-        alreadyInstalled: Boolean(installed.already),
-        handoff: installed.handoff || 0,
-        endpoints: recordSummary.endpoints,
-        missedBeforeArm: installed.missedBeforeArm || []
-      };
+      return startWebmcpRecording(
+        tabId,
+        site,
+        params.tabIdentity || null,
+        options
+      );
     }
 
     if (method === "webmcp.stop") {
@@ -1002,22 +1284,40 @@ var run = (function (globalObject) {
       return probeResult;
     }
 
+    var pageStatus = null;
+
     if (entry) {
-      if (entry.options && entry.options.probeUnseen &&
-          (method === "webmcp.listTools" || method === "webmcp.status")) {
-        probeWebmcp(tabId, entry, {
-          thirdParty: entry.options.probeThirdParty
-        });
+      if (
+        method === "webmcp.listTools" ||
+        method === "webmcp.status" ||
+        method === "webmcp.suggest"
+      ) {
+        pageStatus = runPage("webmcp.status", { tabId: tabId });
+        maybeAutoProbe(tabId, entry, pageStatus);
+
+        if (entry.options && entry.options.probeUnseen) {
+          probeWebmcp(tabId, entry, {
+            thirdParty: entry.options.probeThirdParty
+          });
+        }
       }
 
       drainWebmcp(tabId);
     }
 
+    if (method === "webmcp.suggest") {
+      var snapshotText = typeof params.snapshot === "string"
+        ? params.snapshot
+        : runPage("playwright.domSnapshot", { tabId: tabId });
+      return webmcpStore.suggest(site, snapshotText, { limit: options.limit });
+    }
+
     if (method === "webmcp.status") {
-      var pageStatus = runPage("webmcp.status", { tabId: tabId });
+      pageStatus = pageStatus || runPage("webmcp.status", { tabId: tabId });
       var statusSummary = webmcpStore.summary(site);
       return {
         recording: Boolean(entry),
+        auto: webmcpAuto,
         site: site,
         installed: pageStatus.installed,
         fetchPatched: pageStatus.fetchPatched,
@@ -1032,7 +1332,11 @@ var run = (function (globalObject) {
     }
 
     if (method === "webmcp.listTools") {
-      return webmcpStore.listTools(site, { compact: options.compact === true });
+      return webmcpStore.listTools(site, {
+        compact: options.compact === true,
+        all: options.all === true,
+        includeRemembered: options.includeRemembered === true
+      });
     }
 
     if (method === "webmcp.describe") {
@@ -1334,6 +1638,7 @@ var run = (function (globalObject) {
           if (pageState.url === candidate.url) {
             controlLifecycle.activate(candidate.id);
             ensureControlIndicator(candidate.id);
+            maybeAutoRecord(params.tabIdentity, candidate.id);
             return {
               matched: true,
               url: candidate.url
@@ -1386,6 +1691,7 @@ var run = (function (globalObject) {
         if (matched) {
           controlLifecycle.activate(metadata.id);
           ensureControlIndicator(metadata.id);
+          maybeAutoRecord(params.tabIdentity, metadata.id);
           return {
             matched: true,
             state: pageState.readyState
@@ -1419,6 +1725,10 @@ var run = (function (globalObject) {
       resolveTabIdentity(params.tabIdentity, resolvedTabs);
       params.tabId = params.tabIdentity.id;
       webmcpStore.syncIdentity(params.tabIdentity);
+
+      if (method !== "tabs.close" && method !== "webmcp.stop") {
+        maybeAutoRecord(params.tabIdentity, params.tabId);
+      }
     }
 
     if (params.tabId && method !== "tabs.close") {
@@ -1526,6 +1836,11 @@ var run = (function (globalObject) {
         ? resolvedTabs
         : null;
       var operationResult = runPage(method, params);
+
+      if (method === "playwright.domSnapshot") {
+        operationResult = annotateSnapshot(params.tabId, operationResult);
+      }
+
       var transition = operationResult &&
         operationResult.transition;
       var operationTabsAfter = mayNavigate
@@ -2256,6 +2571,14 @@ var run = (function (globalObject) {
     });
   };
 
+  SafariWebmcp.prototype.suggest = function (snapshot, options) {
+    return callSafari("webmcp.suggest", {
+      tabIdentity: this.tabIdentity,
+      snapshot: typeof snapshot === "string" ? snapshot : undefined,
+      options: options || {}
+    });
+  };
+
   function SafariTab(metadata) {
     this._identity = createTabIdentity(metadata);
     this.playwright = new SafariPlaywright(this._identity);
@@ -2299,9 +2622,17 @@ var run = (function (globalObject) {
     });
   };
 
-  function wrapTab(metadata) {
+  function wrapTab(metadata, options) {
     var tab = new SafariTab(metadata);
     controlLifecycle.activate(tab.id);
+
+    // Only tabs the agent opened itself are task tabs; those learn their
+    // site's APIs automatically. Tabs looked up by id or selection belong
+    // to the user and are never recorded on their own.
+    if (options && options.task === true) {
+      markAutoRecordIdentity(tab._identity);
+    }
+
     return tab;
   }
 
@@ -2347,6 +2678,53 @@ var run = (function (globalObject) {
       return { released: true };
     },
     webmcp: Object.freeze({
+      auto: function (options) {
+        if (options && typeof options === "object") {
+          var keys = Object.keys(webmcpAuto);
+
+          for (var index = 0; index < keys.length; index++) {
+            if (typeof options[keys[index]] === "boolean") {
+              webmcpAuto[keys[index]] = options[keys[index]];
+            }
+          }
+
+          refreshWebmcpExposure();
+        }
+
+        return Object.assign({}, webmcpAuto);
+      },
+      tools: function () {
+        return dynamicToolDefinitions().map(function (tool) {
+          return { name: tool.name, description: tool.description };
+        });
+      },
+      memory: function (site) {
+        return webmcpStore.skeleton(String(site));
+      },
+      import: function (skeleton) {
+        var parsed = typeof skeleton === "string"
+          ? JSON.parse(skeleton)
+          : skeleton;
+        var site = parsed && parsed.site;
+
+        if (!site) {
+          throw new Error("webmcp_import_requires_site");
+        }
+
+        var applied = webmcpStore.remember(String(site), parsed);
+        saveSiteMemory(String(site), true);
+        return { site: String(site), remembered: applied };
+      },
+      forget: function (site) {
+        forgetSiteMemory(String(site));
+        return webmcpStore.clear(String(site));
+      },
+      setTier: function (site, name, tier) {
+        var result = webmcpStore.setTier(String(site), String(name), String(tier));
+        saveSiteMemory(String(site), true);
+        refreshWebmcpExposure();
+        return result;
+      },
       sites: function () {
         return webmcpStore.sites();
       },
@@ -2397,7 +2775,7 @@ var run = (function (globalObject) {
         return wrapTab(callSafari("tabs.open", {
           windowId: options.windowId,
           active: options.active === true
-        }));
+        }), { task: true });
       }
     })
   });
@@ -2773,6 +3151,8 @@ var run = (function (globalObject) {
   function resetRepl() {
     stopAllWebmcpRecorders();
     webmcpStore.reset();
+    webmcpAutoIdentities = [];
+    refreshWebmcpExposure();
 
     var names = Object.getOwnPropertyNames(globalObject);
 
@@ -2895,6 +3275,50 @@ var run = (function (globalObject) {
 
   var tools = createToolDefinitions();
 
+  // Execute a dynamically exposed site tool from the tab that recorded it.
+  function callDynamicTool(exposed, args) {
+    var tabId = recordingTabForSite(exposed.site);
+
+    if (!tabId) {
+      return {
+        content: [{
+          type: "text",
+          text:
+            "No Safari task tab is currently recording " + exposed.site +
+            ". Open one with browser.tabs.new(), navigate to the site, " +
+            "then call this tool again."
+        }],
+        isError: true
+      };
+    }
+
+    var callArgs = {};
+    var pick;
+    var keys = Object.keys(args || {});
+
+    for (var index = 0; index < keys.length; index++) {
+      if (keys[index] === "_pick") {
+        pick = args._pick;
+      } else {
+        callArgs[keys[index]] = args[keys[index]];
+      }
+    }
+
+    var result = callSafari("webmcp.callTool", {
+      tabId: tabId,
+      name: exposed.toolName,
+      args: callArgs,
+      options: { pick: pick }
+    });
+    var text = stringify(result.body === undefined ? result : result.body);
+
+    return {
+      content: [{ type: "text", text: text }],
+      structuredContent: jsonValue(result),
+      isError: result.ok === false
+    };
+  }
+
   function hasId(message) {
     return Object.prototype.hasOwnProperty.call(message, "id");
   }
@@ -2948,6 +3372,11 @@ var run = (function (globalObject) {
         return;
       }
 
+      if (Object.prototype.hasOwnProperty.call(webmcpExposed, name)) {
+        success(message.id, callDynamicTool(webmcpExposed[name], args));
+        return;
+      }
+
       throw new Error("Unknown tool: " + name);
     } catch (error) {
       success(message.id, {
@@ -2962,13 +3391,14 @@ var run = (function (globalObject) {
 
   function handleMessage(message) {
     if (message.method === "initialize" && hasId(message)) {
+      mcpInitialized = true;
       success(message.id, {
         protocolVersion:
           message.params && message.params.protocolVersion
             ? message.params.protocolVersion
             : "2025-03-26",
         capabilities: {
-          tools: {}
+          tools: { listChanged: true }
         },
         serverInfo: {
           name: "safari-browser-use",
@@ -2996,7 +3426,9 @@ var run = (function (globalObject) {
     }
 
     if (message.method === "tools/list" && hasId(message)) {
-      success(message.id, { tools: tools });
+      success(message.id, {
+        tools: tools.concat(dynamicToolDefinitions())
+      });
       return;
     }
 

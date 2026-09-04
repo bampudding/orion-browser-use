@@ -527,7 +527,9 @@ test("runtime guide documents Site API Tools recording and replay rules", async 
   assert.match(documentation, /## Site API Tools \(WebMCP\)/);
   assert.match(documentation, /tab\.webmcp\.record\(\)/);
   assert.match(documentation, /tab\.webmcp\.callTool\(/);
-  assert.match(documentation, /never applies to user tabs/);
+  assert.match(documentation, /User tabs are never recorded/);
+  assert.match(documentation, /# webmcp:/);
+  assert.match(documentation, /browser\.webmcp\.auto\(/);
   assert.match(documentation, /\{ confirmed: true \}/);
   assert.match(documentation, /«redacted»/);
   assert.match(documentation, /browser\.webmcp\.export\(site\)/);

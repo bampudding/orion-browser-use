@@ -28,49 +28,6 @@ export function runWebmcpPageOperation(
     "mp3", "mp4", "webm", "ogg", "wav", "m3u8", "ts",
     "pdf", "zip", "wasm", "html", "htm", "xml", "txt"
   ]);
-  const trackerHosts = [
-    "google-analytics.com",
-    "analytics.google.com",
-    "googletagmanager.com",
-    "doubleclick.net",
-    "sentry.io",
-    "segment.io",
-    "segment.com",
-    "mixpanel.com",
-    "hotjar.com",
-    "clarity.ms",
-    "datadoghq.com",
-    "nr-data.net",
-    "bugsnag.com",
-    "amplitude.com",
-    "facebook.net",
-    "scorecardresearch.com",
-    "mcs.snssdk.com",
-    "mon.zijieapi.com",
-    "fundingchoicesmessages.google.com",
-    "apm-fe.xiaohongshu.com",
-    "t2.xiaohongshu.com",
-    "zhihu-web-analytics.zhihu.com",
-    "prodregistryv2.org",
-    "pdscrb.com",
-    "transcend-cdn.com",
-    "px.ads.linkedin.com",
-    "veta.naver.com",
-    "statsig.com",
-    "launchdarkly.com",
-    "optimizely.com",
-    "intercom.io",
-    "intercomcdn.com",
-    "fullstory.com",
-    "logrocket.com",
-    "browser-intake-us5-datadoghq.com"
-  ];
-
-  const noiseHostRe =
-    /(^|[.-])(analytics|telemetry|metrics|beacon|logs?|stats?|tracking|sentry|apm|rum|mon|mcs)[.-]/i;
-  const noisePathRe =
-    /\/(za\/)?logs?(\/|\.json$|$)|\/log\.json$|\/collect(\/|$)|\/track(ing)?(\/|$)|\/beacon|\/metrics?(\/|$)|\/telemetry|\/analytics|\/pixel(\/|$)|\/report(\/|\.json|$)|\/rum(\/|$)|\/perf(\/|$)|\/monitor(\/|$)|\/rgstr(\/|$)|\/web_logger\/|\/logger\/|\/metalytics(\/|$)|\/initialize(\/|$)|\/sdk\/|\/heartbeat(\/|$)|\/ping(\/|$)/i;
-
   function isJsonish(contentType) {
     return Boolean(contentType) && /json/i.test(String(contentType));
   }
@@ -95,16 +52,9 @@ export function runWebmcpPageOperation(
       return false;
     }
 
-    if (trackerHosts.some(host =>
-      url.hostname === host || url.hostname.endsWith("." + host)
-    )) {
-      return false;
-    }
-
-    if (noiseHostRe.test(url.hostname + ".") || noisePathRe.test(url.pathname)) {
-      return false;
-    }
-
+    // Telemetry is not filtered here: the session scores endpoints from
+    // their responses and hides the noise itself. Only obvious non-API
+    // traffic (static assets) is skipped before it reaches the buffer.
     const lastSegment = url.pathname.split("/").pop() || "";
     const dot = lastSegment.lastIndexOf(".");
 
@@ -249,18 +199,30 @@ export function runWebmcpPageOperation(
     const probeSkipPathRe =
       /\/(uploads?|fonts?|font|webpack-artifacts|assets|static|_next\/static|bundles?)\/|\.(br|gz|woff2?|wasm)$|\.min\.[a-z-]+\.json/i;
     const explicit = Array.isArray(params.urls) ? params.urls : null;
-    const candidates = (explicit
-      ? explicit.map(url => {
-          try {
-            const parsed = new URL(String(url), window.location.href);
-            return { key: parsed.origin + parsed.pathname, url: parsed.href, parsed };
-          } catch (error) {
-            return null;
-          }
-        }).filter(Boolean)
+    const toEntry = url => {
+      try {
+        const parsed = new URL(String(url), window.location.href);
+        return { key: parsed.origin + parsed.pathname, url: parsed.href, parsed };
+      } catch (error) {
+        return null;
+      }
+    };
+    const extra = (Array.isArray(params.extraUrls) ? params.extraUrls : [])
+      .map(toEntry)
+      .filter(Boolean);
+    const discovered = explicit
+      ? explicit.map(toEntry).filter(Boolean)
       : unseenEntries({ includeBeforeArm: true, limit: Number(params.limit) || 30 })
-          .map(entry => ({ ...entry, parsed: new URL(entry.url) }))
-    ).filter(entry =>
+          .map(entry => ({ ...entry, parsed: new URL(entry.url) }));
+    const seenKeys = new Set();
+    const candidates = discovered.concat(extra).filter(entry => {
+      if (seenKeys.has(entry.key)) {
+        return false;
+      }
+
+      seenKeys.add(entry.key);
+      return true;
+    }).filter(entry =>
       !probed.has(entry.key) &&
       shouldCapturePre("GET", entry.parsed) &&
       !probeSkipHostRe.test(entry.parsed.hostname) &&
@@ -864,8 +826,24 @@ export function runWebmcpPageOperation(
     return counts;
   }
 
+  // Shares the document id key with runPageOperation so the session can
+  // tell one document's recorder state from the next after navigation.
+  function documentId() {
+    const key = "__safari_browser_use_document_id__";
+
+    if (!window[key]) {
+      window[key] =
+        `document-${Date.now().toString(36)}-` +
+        Math.random().toString(36).slice(2);
+    }
+
+    return window[key];
+  }
+
   function status() {
     return {
+      documentId: documentId(),
+      readyState: document.readyState,
       installed: Boolean(window[stateKey]),
       pending: buffer().length,
       calls: Object.keys(calls()).length,

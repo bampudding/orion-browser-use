@@ -233,7 +233,7 @@ test("captures record the credentials mode of the original request", async () =>
   assert.equal(captures[1].credentials, "same-origin");
 });
 
-test("JSON served without a content type is sniffed and telemetry is ignored", async () => {
+test("JSON served without a content type is sniffed and non-JSON is dropped", async () => {
   const page = createPage();
   page.window.fetch = input => Promise.resolve(
     jsonResponse(String(input).includes("plain") ? '{"sniffed":true}' : "<html></html>", 200, null)
@@ -248,8 +248,9 @@ test("JSON served without a content type is sniffed and telemetry is ignored", a
   const drained = page.run("webmcp.drain");
   assert.equal(drained.captures.length, 1);
   assert.equal(drained.captures[0].responseContentType, "application/json; sniffed");
-  assert.equal(status.counters.filtered, 1);
+  assert.equal(status.counters.filtered, 2);
   assert.equal(status.counters.fetchSeen, 3);
+  assert.equal(typeof status.documentId, "string");
   assert.equal(Array.isArray(status.unseen), true);
 });
 

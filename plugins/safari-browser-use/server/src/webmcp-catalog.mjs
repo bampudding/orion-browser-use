@@ -8,6 +8,9 @@ export const WEBMCP_LIMITS = Object.freeze({
   maxEndpointsPerSite: 200,
   maxSamples: 3,
   maxSampleBytes: 4 * 1024,
+  // The newest sample keeps more of the body so DOM matching can see the
+  // whole first page of a list, not just its first item.
+  maxLatestSampleBytes: 32 * 1024,
   maxToolResultBytes: 1024 * 1024,
   maxToolResultBytesCeiling: 8 * 1024 * 1024,
   maxMissedUrls: 40
@@ -184,6 +187,17 @@ export function sniffsAsJson(text) {
   return head.startsWith("{") || head.startsWith("[");
 }
 
+// Known telemetry vendors. Used only as a scoring prior, never as a hard
+// filter: the catalog learns what is noise from the responses themselves.
+export function matchesNoiseSeed(url) {
+  const hostAndPath = url.hostname + url.pathname;
+  return TRACKER_HOSTS.some(tracker =>
+    url.hostname === tracker ||
+    url.hostname.endsWith("." + tracker) ||
+    hostAndPath.startsWith(tracker)
+  ) || isNoiseUrl(url);
+}
+
 export function shouldCapturePre(method, url) {
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     return false;
@@ -192,20 +206,6 @@ export function shouldCapturePre(method, url) {
   const upper = String(method).toUpperCase();
 
   if (upper === "OPTIONS" || upper === "HEAD") {
-    return false;
-  }
-
-  const hostAndPath = url.hostname + url.pathname;
-
-  if (TRACKER_HOSTS.some(tracker =>
-    url.hostname === tracker ||
-    url.hostname.endsWith("." + tracker) ||
-    hostAndPath.startsWith(tracker)
-  )) {
-    return false;
-  }
-
-  if (isNoiseUrl(url)) {
     return false;
   }
 
@@ -795,9 +795,14 @@ export function mergeCapture(siteData, capture) {
   }
 
   if (capture.responseBody !== undefined) {
+    for (const previous of endpoint.samples) {
+      previous.body = truncate(previous.body, WEBMCP_LIMITS.maxSampleBytes);
+    }
+
     endpoint.samples.push({
       status: capture.status,
-      body: truncate(capture.responseBody, WEBMCP_LIMITS.maxSampleBytes),
+      body: truncate(capture.responseBody, WEBMCP_LIMITS.maxLatestSampleBytes),
+      fullLength: capture.responseBody.length,
       timestamp: capture.timestamp
     });
 
@@ -938,6 +943,447 @@ export function isFirstParty(site, host) {
   return hostname === site || hostname.endsWith("." + site);
 }
 
+// --- Usefulness scoring ------------------------------------------------
+//
+// Instead of a hard-coded blocklist, every endpoint is scored from what it
+// actually returned: data-bearing JSON scores high, empty or constant
+// acknowledgements score low. Known telemetry vendors only add a prior.
+
+function parseSample(endpoint) {
+  const sample = endpoint.samples[endpoint.samples.length - 1];
+
+  if (!sample?.body) {
+    return { parsed: undefined, size: 0 };
+  }
+
+  try {
+    return { parsed: JSON.parse(sample.body), size: sample.body.length };
+  } catch (error) {
+    // Truncated sample: still count size, treat as unparsed object.
+    return { parsed: undefined, size: sample.body.length, truncated: true };
+  }
+}
+
+function largestArrayLength(value, depth = 0) {
+  if (depth > 6 || value === null || typeof value !== "object") {
+    return 0;
+  }
+
+  let best = Array.isArray(value) ? value.length : 0;
+  const children = Array.isArray(value) ? value.slice(0, 20) : Object.values(value);
+
+  for (const child of children) {
+    best = Math.max(best, largestArrayLength(child, depth + 1));
+  }
+
+  return best;
+}
+
+function countKeys(value, depth = 0) {
+  if (depth > 4 || value === null || typeof value !== "object") {
+    return 0;
+  }
+
+  const own = Array.isArray(value) ? 0 : Object.keys(value).length;
+  return own + Object.values(value).slice(0, 20).reduce(
+    (sum, child) => sum + countKeys(child, depth + 1),
+    0
+  );
+}
+
+export function scoreEndpoint(site, endpoint) {
+  const reasons = [];
+  let score = 0;
+  const readOnly = isReadOnlyEndpoint(endpoint);
+  const firstParty = isFirstParty(site, endpoint.host);
+  const { parsed, size, truncated } = parseSample(endpoint);
+  const arrayLength = largestArrayLength(parsed);
+  const keys = countKeys(parsed);
+
+  if (readOnly) {
+    score += 2;
+    reasons.push("read");
+  }
+
+  if (firstParty) {
+    score += 1;
+    reasons.push("first-party");
+  } else {
+    score -= 1;
+    reasons.push("third-party");
+  }
+
+  const fullLength = endpoint.samples[endpoint.samples.length - 1]?.fullLength ?? size;
+
+  if (endpoint.samples.length === 0 && endpoint.observationCount > 0) {
+    score -= 2;
+    reasons.push("no-body");
+  } else if (size > 0 && size < 40) {
+    score -= 2;
+    reasons.push("tiny-body");
+  } else if (truncated || fullLength >= WEBMCP_LIMITS.maxSampleBytes) {
+    score += 2;
+    reasons.push("large-body");
+  }
+
+  if (arrayLength >= 3) {
+    score += 2;
+    reasons.push(`list(${arrayLength})`);
+  } else if (keys >= 8) {
+    score += 1;
+    reasons.push(`object(${keys} keys)`);
+  }
+
+  if (
+    endpoint.observationCount >= 3 &&
+    endpoint.samples.length >= 2 &&
+    new Set(endpoint.samples.map(sample => sample.body)).size === 1
+  ) {
+    score -= 1;
+    reasons.push("constant-response");
+  }
+
+  if (!readOnly && endpoint.lastBody !== undefined && size < 200) {
+    score -= 1;
+    reasons.push("fire-and-forget");
+  }
+
+  try {
+    if (matchesNoiseSeed(parseUrl(endpoint.origin + endpoint.templatePath))) {
+      score -= 2;
+      reasons.push("telemetry-vendor");
+    }
+  } catch (error) {
+    // unparsable origin
+  }
+
+  // A third-party ".json" file with no parameters is a static asset
+  // (animation data, translations), not an API.
+  if (
+    !firstParty &&
+    /\.json$/i.test(endpoint.templatePath) &&
+    Object.keys(endpoint.querySchema).length === 0 &&
+    endpoint.pathParams.length === 0
+  ) {
+    score -= 3;
+    reasons.push("static-json");
+  }
+
+  if (typeof endpoint.tierOverride === "string") {
+    reasons.push(`user:${endpoint.tierOverride}`);
+  }
+
+  // data: read + first-party + evidence of a list or a large body.
+  // config: readable but small. noise: acknowledgements and telemetry.
+  const tier = endpoint.tierOverride ||
+    (score >= 5 ? "data" : score >= 1 ? "config" : "noise");
+
+  return { score, tier, reasons };
+}
+
+// --- DOM ↔ API matching ---------------------------------------------------
+//
+// Which recorded endpoint produced what the user sees? Compare the text in
+// an ARIA snapshot with the string values in each endpoint's response
+// sample; endpoints sharing many texts with the page back its visible list.
+
+export function snapshotTexts(snapshot) {
+  const texts = new Set();
+
+  for (const rawLine of String(snapshot || "").split("\n")) {
+    const line = rawLine.trim();
+
+    for (const match of line.matchAll(/"([^"]{3,120})"/g)) {
+      texts.add(match[1].trim());
+    }
+
+    const textMatch = /^-\s*text:\s*(.+)$/.exec(line);
+
+    if (textMatch && textMatch[1].length >= 3) {
+      texts.add(textMatch[1].replace(/^"|"$/g, "").trim());
+    }
+  }
+
+  return [...texts].filter(text => !/^[\d\s.,:%/-]+$/.test(text));
+}
+
+function sampleStrings(value, out = [], depth = 0) {
+  if (depth > 8 || out.length > 2000) {
+    return out;
+  }
+
+  if (typeof value === "string") {
+    if (value.length >= 3 && value.length <= 2000) {
+      out.push(value);
+    }
+  } else if (Array.isArray(value)) {
+    for (const item of value) {
+      sampleStrings(item, out, depth + 1);
+    }
+  } else if (value && typeof value === "object") {
+    for (const item of Object.values(value)) {
+      sampleStrings(item, out, depth + 1);
+    }
+  }
+
+  return out;
+}
+
+export function matchSnapshot(site, endpoints, snapshot, options = {}) {
+  const texts = snapshotTexts(snapshot);
+  const minMatches = options.minMatches ?? 2;
+  const suggestions = [];
+
+  if (texts.length === 0) {
+    return suggestions;
+  }
+
+  for (const endpoint of endpoints) {
+    const { parsed } = parseSample(endpoint);
+
+    if (parsed === undefined) {
+      continue;
+    }
+
+    const strings = sampleStrings(parsed);
+
+    if (strings.length === 0) {
+      continue;
+    }
+
+    const joined = strings.join(" ");
+    const matched = [];
+
+    for (const text of texts) {
+      if (joined.includes(text)) {
+        matched.push(text);
+      } else if (text.length > 24) {
+        const head = text.slice(0, 24);
+
+        if (joined.includes(head)) {
+          matched.push(text);
+        }
+      }
+    }
+
+    // Two shared texts, or one long distinctive one (a title, a full
+    // sentence), is enough evidence that this endpoint feeds the page.
+    const strongSingle = matched.length === 1 && matched[0].length >= 12;
+
+    if (matched.length >= minMatches || strongSingle) {
+      const { score, tier } = scoreEndpoint(site, endpoint);
+      suggestions.push({
+        name: endpoint.toolName,
+        method: endpoint.method,
+        templatePath: endpoint.templatePath,
+        readOnly: isReadOnlyEndpoint(endpoint),
+        tier,
+        score,
+        matched: matched.length,
+        of: texts.length,
+        items: largestArrayLength(parsed),
+        examples: matched.slice(0, 3)
+      });
+    }
+  }
+
+  return suggestions
+    .sort((a, b) => b.matched - a.matched || b.score - a.score)
+    .slice(0, options.limit ?? 3);
+}
+
+export function formatSuggestions(suggestions) {
+  if (!suggestions || suggestions.length === 0) {
+    return "";
+  }
+
+  const lines = suggestions.map(s =>
+    `# webmcp: ${s.readOnly ? "" : "[write] "}${s.name} (${s.method} ${s.templatePath}) ` +
+    `matched ${s.matched}/${s.of} visible texts` +
+    (s.items ? `, returns ${s.items} items` : "") +
+    (s.readOnly
+      ? ` → tab.webmcp.callTool("${s.name}") returns this data in one call`
+      : " → needs user confirmation before replay")
+  );
+
+  return lines.join("\n");
+}
+
+// --- Cross-session memory -------------------------------------------------
+//
+// A skeleton remembers which endpoints a site has, without headers, body
+// examples, response samples, or sensitive query values. On the next visit
+// the GET ones are probed so the catalog fills in seconds instead of after
+// the user scrolls.
+
+function probeUrlFor(endpoint) {
+  if (!isReadOnlyEndpoint(endpoint) || endpoint.method !== "GET") {
+    return undefined;
+  }
+
+  const pathArgs = {};
+
+  for (const param of endpoint.pathParams) {
+    pathArgs[param.name] = param.sample;
+  }
+
+  try {
+    const path = fillTemplate(endpoint.templatePath, pathArgs);
+    const query = Object.entries(endpoint.lastQuery || {}).filter(
+      ([name]) => !isSensitiveName(name)
+    );
+    return endpoint.origin + path + formatQuery(query);
+  } catch (error) {
+    return undefined;
+  }
+}
+
+export function skeletonFor(site, siteData, now = Date.now()) {
+  return {
+    format: "webmcp-site-memory",
+    version: 1,
+    site,
+    savedAt: now,
+    endpoints: Object.values(siteData?.endpoints || {})
+      .filter(endpoint => endpoint.observationCount > 0 || endpoint.remembered)
+      .map(endpoint => {
+        const observed = endpoint.observationCount > 0;
+        const rating = observed
+          ? scoreEndpoint(site, endpoint)
+          : { score: endpoint.rememberedScore ?? 0, tier: endpoint.rememberedTier || "config" };
+        const { score, tier } = rating;
+        return {
+          key: endpoint.key,
+          method: endpoint.method,
+          origin: endpoint.origin,
+          host: endpoint.host,
+          templatePath: endpoint.templatePath,
+          gqlOperation: endpoint.gqlOperation,
+          toolName: endpoint.toolName,
+          pathParams: endpoint.pathParams,
+          probeUrl: observed ? probeUrlFor(endpoint) : endpoint.probeUrl,
+          score,
+          tier,
+          tierOverride: endpoint.tierOverride,
+          readOnlyOverride: endpoint.readOnlyOverride,
+          description: endpoint.descriptionEdited ? endpoint.description : undefined,
+          lastSeen: endpoint.lastSeen,
+          sessions: (endpoint.sessions || 0) + (observed ? 1 : 0)
+        };
+      })
+  };
+}
+
+export function applySkeleton(siteData, skeleton) {
+  if (!skeleton || skeleton.format !== "webmcp-site-memory") {
+    return 0;
+  }
+
+  let applied = 0;
+
+  for (const remembered of skeleton.endpoints || []) {
+    if (!remembered?.key || !remembered.templatePath || !remembered.origin) {
+      continue;
+    }
+
+    let endpoint = siteData.endpoints[remembered.key];
+
+    if (!endpoint) {
+      let host = remembered.host;
+
+      if (!host) {
+        try {
+          host = parseUrl(remembered.origin).host;
+        } catch (error) {
+          continue;
+        }
+      }
+
+      endpoint = {
+        key: remembered.key,
+        method: remembered.method,
+        origin: remembered.origin,
+        host,
+        templatePath: remembered.templatePath,
+        pathParams: remembered.pathParams || [],
+        gqlOperation: remembered.gqlOperation,
+        querySchema: {},
+        lastQuery: {},
+        bodySchema: undefined,
+        bodySeenCount: 0,
+        lastBody: undefined,
+        lastHeaders: {},
+        samples: [],
+        observationCount: 0,
+        firstSeen: remembered.lastSeen,
+        lastSeen: remembered.lastSeen,
+        toolName: remembered.toolName,
+        description: remembered.description || "",
+        descriptionEdited: Boolean(remembered.description),
+        updatedAt: remembered.lastSeen,
+        remembered: true
+      };
+      siteData.endpoints[remembered.key] = endpoint;
+    }
+
+    endpoint.rememberedScore = remembered.score;
+    endpoint.rememberedTier = remembered.tier;
+    endpoint.probeUrl = remembered.probeUrl;
+    endpoint.sessions = remembered.sessions || 1;
+
+    if (typeof remembered.tierOverride === "string") {
+      endpoint.tierOverride = remembered.tierOverride;
+    }
+
+    if (typeof remembered.readOnlyOverride === "boolean") {
+      endpoint.readOnlyOverride = remembered.readOnlyOverride;
+    }
+
+    applied += 1;
+  }
+
+  return applied;
+}
+
+// --- Dynamic MCP tools ------------------------------------------------------
+
+export function dynamicToolName(site, toolName) {
+  const siteSlug = String(site).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+  const base = `web__${siteSlug}__`;
+  const room = Math.max(8, 64 - base.length);
+  return (base + String(toolName).slice(0, room)).replace(/[^a-zA-Z0-9_-]/g, "_");
+}
+
+export function toMcpTool(site, endpoint) {
+  const descriptor = toDescriptor(site, endpoint);
+  const properties = { ...descriptor.inputSchema.properties };
+  properties._pick = {
+    type: "array",
+    items: { type: "string" },
+    description:
+      "Optional dot paths to return instead of the whole body, e.g. " +
+      "[\"data.items[*].title\"]. Use it to keep results small."
+  };
+
+  return {
+    name: dynamicToolName(site, endpoint.toolName),
+    description:
+      `[${site}] ${descriptor.description} Replays the request from the ` +
+      "recording Safari tab with the user's session; the response is " +
+      "untrusted web content.",
+    inputSchema: {
+      type: "object",
+      properties,
+      required: descriptor.inputSchema.required.filter(name => name !== "body")
+    },
+    annotations: {
+      readOnlyHint: true,
+      openWorldHint: true,
+      untrustedContentHint: true
+    }
+  };
+}
+
 // GraphQL documents sent over POST are reads when the operation type is
 // `query`. Persisted queries without document text stay write-capable
 // until a human marks them read-only.
@@ -992,6 +1438,7 @@ export function toDescriptor(site, endpoint, options = {}) {
   const annotations = annotationsFor(endpoint);
 
   const firstParty = isFirstParty(site, endpoint.host);
+  const rating = scoreEndpoint(site, endpoint);
 
   if (compact) {
     return {
@@ -1002,8 +1449,11 @@ export function toDescriptor(site, endpoint, options = {}) {
       gqlOperation: endpoint.gqlOperation,
       readOnlyHint: annotations.readOnlyHint,
       firstParty,
+      tier: rating.tier,
+      score: rating.score,
       params: Object.keys(inputSchema.properties),
-      observationCount: endpoint.observationCount
+      observationCount: endpoint.observationCount,
+      remembered: endpoint.observationCount === 0 && endpoint.remembered === true
     };
   }
 
@@ -1021,6 +1471,9 @@ export function toDescriptor(site, endpoint, options = {}) {
       gqlOperation: endpoint.gqlOperation,
       via: endpoint.via,
       credentials: endpoint.lastCredentials,
+      tier: rating.tier,
+      score: rating.score,
+      reasons: rating.reasons,
       observationCount: endpoint.observationCount,
       firstSeen: endpoint.firstSeen,
       lastSeen: endpoint.lastSeen,
@@ -1035,7 +1488,8 @@ export function toDescriptor(site, endpoint, options = {}) {
     descriptor.meta.samples = endpoint.samples.map(sample => ({
       status: sample.status,
       timestamp: sample.timestamp,
-      body: sample.body
+      fullLength: sample.fullLength,
+      body: truncate(sample.body, WEBMCP_LIMITS.maxSampleBytes)
     }));
   }
 
@@ -1187,15 +1641,29 @@ export function createWebmcpStore(now = Date.now) {
     return endpoint;
   }
 
-  // First-party endpoints first, then most recently seen.
-  function sortedEndpoints(site) {
+  // Highest usefulness score first, then most recently seen. Endpoints that
+  // are only remembered from an earlier session (never observed now) sort
+  // last; noise is hidden unless asked for.
+  function sortedEndpoints(site, options = {}) {
     const data = siteData(site, false);
-    return data
-      ? Object.values(data.endpoints).sort((a, b) =>
-          Number(isFirstParty(site, b.host)) - Number(isFirstParty(site, a.host)) ||
-          b.lastSeen - a.lastSeen
-        )
-      : [];
+
+    if (!data) {
+      return [];
+    }
+
+    return Object.values(data.endpoints)
+      .map(endpoint => ({ endpoint, rating: scoreEndpoint(site, endpoint) }))
+      .filter(({ endpoint, rating }) =>
+        options.all === true ||
+        (rating.tier !== "noise" &&
+          (endpoint.observationCount > 0 || options.includeRemembered === true))
+      )
+      .sort((a, b) =>
+        Number(b.endpoint.observationCount > 0) - Number(a.endpoint.observationCount > 0) ||
+        b.rating.score - a.rating.score ||
+        b.endpoint.lastSeen - a.endpoint.lastSeen
+      )
+      .map(({ endpoint }) => endpoint);
   }
 
   return {
@@ -1296,9 +1764,85 @@ export function createWebmcpStore(now = Date.now) {
     },
 
     listTools(site, options = {}) {
-      return sortedEndpoints(site).map(endpoint =>
+      return sortedEndpoints(site, options).map(endpoint =>
         toDescriptor(site, endpoint, options)
       );
+    },
+
+    // Endpoints worth exposing as first-class MCP tools: observed, read-only,
+    // data-bearing. Capped so a busy site cannot flood the tool list.
+    exposable(site, limit = 40) {
+      return sortedEndpoints(site)
+        .filter(endpoint =>
+          isReadOnlyEndpoint(endpoint) &&
+          scoreEndpoint(site, endpoint).tier === "data"
+        )
+        .slice(0, limit);
+    },
+
+    mcpTools(limit = 40) {
+      const tools = [];
+
+      for (const site of sites.keys()) {
+        for (const endpoint of this.exposable(site, limit)) {
+          tools.push({
+            site,
+            toolName: endpoint.toolName,
+            tool: toMcpTool(site, endpoint)
+          });
+        }
+      }
+
+      return tools;
+    },
+
+    suggest(site, snapshot, options) {
+      return matchSnapshot(site, sortedEndpoints(site), snapshot, options);
+    },
+
+    setTier(site, name, tier) {
+      const endpoint = endpointByName(site, name);
+
+      if (!["data", "config", "noise"].includes(tier)) {
+        throw new Error(`webmcp_invalid_tier: ${tier}`);
+      }
+
+      endpoint.tierOverride = tier;
+      endpoint.updatedAt = now();
+      return toDescriptor(site, endpoint);
+    },
+
+    skeleton(site) {
+      return skeletonFor(site, siteData(site, false), now());
+    },
+
+    remember(site, skeleton) {
+      return applySkeleton(siteData(site, true), skeleton);
+    },
+
+    // GET URLs worth probing on a fresh visit: remembered read endpoints
+    // that have not been observed in this session yet.
+    rememberedProbeUrls(site, limit = 20) {
+      const data = siteData(site, false);
+
+      if (!data) {
+        return [];
+      }
+
+      return Object.values(data.endpoints)
+        .filter(endpoint =>
+          endpoint.observationCount === 0 &&
+          typeof endpoint.probeUrl === "string" &&
+          endpoint.rememberedTier !== "noise"
+        )
+        .sort((a, b) => (b.rememberedScore || 0) - (a.rememberedScore || 0))
+        .slice(0, limit)
+        .map(endpoint => endpoint.probeUrl);
+    },
+
+    // Signature of the exposable tool set, for tools/list_changed.
+    exposureSignature(limit = 40) {
+      return this.mcpTools(limit).map(entry => entry.tool.name).sort().join("\n");
     },
 
     describe(site, name) {

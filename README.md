@@ -206,7 +206,7 @@ the indicator in the new page before the same browser call returns.
 | 🌐 Existing Safari session | Work with your open tabs, cookies, and signed-in state |
 | ⚡ Persistent synchronous REPL | Reuse variables and browser state across tool calls |
 | 🎭 Playwright-style API | Locate elements by role, label, text, test ID, or attribute |
-| 📡 Site API Tools (WebMCP) | Record a task tab's JSON API calls as WebMCP tool descriptors and replay reads with one call |
+| 📡 Site API Tools (WebMCP) | Task tabs learn the page's JSON APIs automatically, rank them by the data they return, point out which endpoint backs the visible list, and publish read endpoints as tools |
 | ✨ Visible control indicator | See a perimeter glow and fake cursor while AI control is active |
 | 🔌 Plugin and Skill-only modes | Use native plugins or the standalone Agent Skill |
 | 🛡️ Deliberate interactions | Inspect first, target unique elements, and verify every action |
