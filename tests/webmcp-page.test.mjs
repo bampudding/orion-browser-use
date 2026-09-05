@@ -295,3 +295,69 @@ test("probe re-requests unseen first-party GET URLs and keeps JSON responses", a
   const again = page.run("webmcp.probe", { token: "pr2", site: "example.com", urls: ["https://example.com/api/feed?page=1"] });
   assert.equal(again.total, 0);
 });
+
+test("observed cross-site JSON recovery excludes other probe candidates", async () => {
+  const page = createPage();
+  page.run("webmcp.install");
+
+  const started = page.run("webmcp.probe", {
+    token: "pr-cross-site-json",
+    site: "example.com",
+    thirdParty: true,
+    observedCrossSiteJsonOnly: true,
+    urls: [
+      "https://example.com/api/local.json",
+      "https://basket-19.wbbasket.ru/product/card.json",
+      "https://api.other.net/items"
+    ]
+  });
+
+  assert.equal(started.total, 1);
+  await settle();
+  await settle();
+
+  const done = page.run("webmcp.callStatus", {
+    token: "pr-cross-site-json"
+  });
+  assert.deepEqual(
+    done.results.map(result => result.url),
+    ["https://basket-19.wbbasket.ru/product/card.json"]
+  );
+});
+
+test("cross-site JSON probes retry without credentials after a CORS failure", async () => {
+  const page = createPage();
+  const attempts = [];
+  page.window.fetch = (input, init) => {
+    attempts.push(init.credentials);
+
+    if (init.credentials === "include") {
+      return Promise.reject(new TypeError("Load failed"));
+    }
+
+    return Promise.resolve(jsonResponse({ product: 315109186 }));
+  };
+  page.run("webmcp.install");
+
+  page.run("webmcp.probe", {
+    token: "pr-cross-site-cors",
+    site: "example.com",
+    thirdParty: true,
+    observedCrossSiteJsonOnly: true,
+    urls: [
+      "https://basket-19.wbbasket.ru/vol3151/315109186/card.json"
+    ]
+  });
+  await settle();
+  await settle();
+
+  const done = page.run("webmcp.callStatus", {
+    token: "pr-cross-site-cors"
+  });
+  const capture = page.run("webmcp.drain").captures[0];
+
+  assert.deepEqual(attempts, ["include", "omit"]);
+  assert.equal(done.results[0].kept, true);
+  assert.equal(done.results[0].retriedWithoutCredentials, true);
+  assert.equal(capture.credentials, "omit");
+});

@@ -729,7 +729,7 @@ var run = (function (globalObject) {
   // browser.webmcp.auto({ ... }); defaults favour learning without asking.
   var webmcpAuto = {
     record: true,   // record every task tab opened with browser.tabs.new()
-    probe: true,    // probe unseen first-party GET URLs once per document
+    probe: true,    // recover eligible unseen GET URLs once per document
     suggest: true,  // annotate domSnapshot() with the endpoints behind it
     expose: true,   // register data-bearing read endpoints as MCP tools
     remember: true  // keep a credential-free skeleton per site on disk
@@ -915,7 +915,9 @@ var run = (function (globalObject) {
     webmcpStore.record(tabId, site, identity || null);
     webmcpStore.setOptions(tabId, {
       probeUnseen: options.probeUnseen === true,
-      probeThirdParty: options.probeThirdParty === true
+      probeThirdParty: options.probeThirdParty === true,
+      recoverObservedCrossSiteJson:
+        options.recoverObservedCrossSiteJson === true
     });
     var remembered = loadSiteMemory(site);
 
@@ -952,14 +954,16 @@ var run = (function (globalObject) {
     }
 
     try {
-      startWebmcpRecording(tabId, site, identity, {});
+      startWebmcpRecording(tabId, site, identity, {
+        recoverObservedCrossSiteJson: true
+      });
     } catch (error) {
       // The page may still be loading; the next operation retries.
     }
   }
 
-  // Probe once per document: unseen first-party GET URLs plus GET
-  // endpoints remembered from earlier sessions.
+  // Probe once per document: unseen first-party GET URLs, remembered GET
+  // endpoints, and narrowly scoped cross-site JSON resources for task tabs.
   function maybeAutoProbe(tabId, entry, pageStatus) {
     if (!webmcpAuto.probe || !entry) {
       return null;
@@ -983,6 +987,19 @@ var run = (function (globalObject) {
         timeoutMs: 8000,
         extraUrls: webmcpStore.rememberedProbeUrls(entry.site)
       });
+
+      if (
+        entry.options &&
+        entry.options.recoverObservedCrossSiteJson
+      ) {
+        probeWebmcp(tabId, entry, {
+          limit: 20,
+          timeoutMs: 8000,
+          thirdParty: true,
+          observedCrossSiteJsonOnly: true
+        });
+      }
+
       return result;
     } catch (error) {
       return null;
@@ -1141,7 +1158,9 @@ var run = (function (globalObject) {
       urls: Array.isArray(options.urls) ? options.urls : undefined,
       extraUrls: Array.isArray(options.extraUrls) ? options.extraUrls : undefined,
       limit: options.limit,
-      thirdParty: options.thirdParty === true
+      thirdParty: options.thirdParty === true,
+      observedCrossSiteJsonOnly:
+        options.observedCrossSiteJsonOnly === true
     });
 
     if (started.total === 0) {
@@ -1416,7 +1435,14 @@ var run = (function (globalObject) {
       initialDocumentId: initialState.documentId,
       initialUrl: initialState.tabUrl,
       inspect: function () {
-        return inspectControlledDocument(tabId);
+        var state = inspectControlledDocument(tabId);
+
+        if (options.tabIdentity) {
+          maybeAutoRecord(options.tabIdentity, tabId);
+        }
+
+        ensureWebmcpRecorder(tabId);
+        return state;
       },
       restore: function () {
         ensureControlIndicator(tabId);
@@ -1781,6 +1807,7 @@ var run = (function (globalObject) {
       restoreControlForNavigation(params.tabId, initialState, {
         changeTimeoutMs: 10000,
         settleTimeMs: 150,
+        tabIdentity: params.tabIdentity,
         timeoutMs: 10000
       });
       synchronizeActionTab(params.tabIdentity, params.tabId);

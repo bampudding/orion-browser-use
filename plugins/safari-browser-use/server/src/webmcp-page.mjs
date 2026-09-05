@@ -189,6 +189,8 @@ export function runWebmcpPageOperation(
     state.probed ??= [];
     const probed = new Set(state.probed);
     const sameSiteOnly = params.thirdParty !== true;
+    const observedCrossSiteJsonOnly =
+      params.observedCrossSiteJsonOnly === true;
     const siteSuffix = String(params.site || "").toLowerCase();
     const isFirstParty = hostname =>
       !siteSuffix || hostname === siteSuffix || hostname.endsWith("." + siteSuffix);
@@ -227,6 +229,11 @@ export function runWebmcpPageOperation(
       shouldCapturePre("GET", entry.parsed) &&
       !probeSkipHostRe.test(entry.parsed.hostname) &&
       !probeSkipPathRe.test(entry.parsed.pathname) &&
+      (
+        !observedCrossSiteJsonOnly ||
+        !isFirstParty(entry.parsed.hostname) &&
+          /\.json$/i.test(entry.parsed.pathname)
+      ) &&
       (!sameSiteOnly || isFirstParty(entry.parsed.hostname))
     );
 
@@ -248,11 +255,26 @@ export function runWebmcpPageOperation(
       const result = { url: entry.url.slice(0, 200), status: 0, kept: false };
 
       try {
-        const response = await fetchImpl.call(window, entry.url, {
+        let credentials = "include";
+        let response;
+        const attempt = value => fetchImpl.call(window, entry.url, {
           method: "GET",
-          credentials: "include",
+          credentials: value,
           headers: { accept: "application/json, text/plain, */*" }
         });
+
+        try {
+          response = await attempt(credentials);
+        } catch (error) {
+          if (entry.parsed.origin === window.location.origin) {
+            throw error;
+          }
+
+          credentials = "omit";
+          result.retriedWithoutCredentials = true;
+          response = await attempt(credentials);
+        }
+
         result.status = response.status;
         const responseContentType = response.headers.get("content-type") ?? undefined;
         result.contentType = responseContentType || null;
@@ -271,7 +293,7 @@ export function runWebmcpPageOperation(
           responseBody,
           timestamp: Date.now(),
           via: "probe",
-          credentials: "include"
+          credentials
         };
 
         if (shouldKeep(capture)) {
