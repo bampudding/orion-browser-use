@@ -1,0 +1,18 @@
+{
+  "name": "orion-browser-use",
+  "version": "0.1.0",
+  "description": "Control the user's Orion tabs through macOS Apple Events.",
+  "author": { "name": "bampudding", "url": "https://github.com/bampudding" },
+  "repository": "https://github.com/bampudding/orion-browser-use",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Orion Browser Use",
+    "shortDescription": "Control Orion through native Apple Events scripting.",
+    "longDescription": "A local MCP server and skill for Orion tabs and page JavaScript. No browser extension is required.",
+    "developerName": "bampudding",
+    "category": "Developer",
+    "capabilities": ["Interactive", "Write"],
+    "defaultPrompt": "Use Orion Browser Use to inspect or operate my Orion browser."
+  },
+  "mcpServers": "./.mcp.json"
+}

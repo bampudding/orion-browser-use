@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "orion-browser-use": {
+      "command": "node",
+      "args": ["plugins/orion-browser-use/server/index.mjs"]
+    }
+  }
+}

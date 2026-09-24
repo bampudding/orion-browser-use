@@ -1,0 +1,6 @@
+interface:
+  display_name: "Control Orion"
+  short_description: "Operate Orion using native macOS browser scripting"
+  default_prompt: "Use $control-orion to inspect or operate the user's Orion browser."
+policy:
+  allow_implicit_invocation: true

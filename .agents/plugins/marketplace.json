@@ -1,20 +1,12 @@
 {
-  "name": "citrolabs",
-  "interface": {
-    "displayName": "CitroLabs"
-  },
+  "name": "bampudding",
+  "interface": { "displayName": "bampudding" },
   "plugins": [
     {
-      "name": "safari-browser-use",
-      "source": {
-        "source": "local",
-        "path": "./plugins/safari-browser-use"
-      },
-      "policy": {
-        "installation": "AVAILABLE",
-        "authentication": "ON_INSTALL"
-      },
-      "category": "Productivity"
+      "name": "orion-browser-use",
+      "source": { "source": "local", "path": "./plugins/orion-browser-use" },
+      "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" },
+      "category": "Developer"
     }
   ]
 }

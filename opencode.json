@@ -1,0 +1,10 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "orion-browser-use": {
+      "type": "local",
+      "command": ["node", "plugins/orion-browser-use/server/index.mjs"],
+      "enabled": true
+    }
+  }
+}
