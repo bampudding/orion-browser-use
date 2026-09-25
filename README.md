@@ -39,7 +39,7 @@ Run `node /absolute/path/to/plugins/orion-browser-use/server/index.mjs` as a loc
 
 ## Use
 
-In the `js` MCP tool, call `browser.doctor()` and `browser.documentation()` first. The main API is `browser.tabs.list()`, `browser.tabs.active()`, `browser.tabs.open(url)`, `browser.tabs.activate(ref)`, `browser.tabs.navigate(url, ref)`, `browser.tabs.close(ref)`, `browser.page.snapshot(ref)`, and `browser.page.evaluate(code, ref)`. Tab references contain `windowIndex` and `tabIndex` and can become stale when tabs move. Use a new task tab for independent browsing and close it when done.
+In the `js` MCP tool, call `browser.doctor()` and `browser.documentation()` first. The main API is `browser.tabs.list()`, `browser.tabs.active()`, `browser.tabs.open(url)`, `browser.tabs.activate(ref)`, `browser.tabs.navigate(url, ref)`, `browser.tabs.close(ref)`, `browser.page.snapshot(ref)`, and `browser.page.evaluate(code, ref)`, and CSS locators via `browser.page.locator(css, ref)` with `count`, `text`, `click`, `fill`, `check`, `selectOption`, `scrollIntoView`, and bounded `waitFor`. Mutating locators require a unique match and dispatch DOM input/change events. These do not synthesize trusted hardware input; read the resulting page state to verify each action. Tab references contain `windowIndex` and `tabIndex` and can become stale when tabs move. Use a new task tab for independent browsing and close it when done.
 
 This initial Orion port supports tab operations and synchronous page JavaScript. It does not expose screenshot, console, network capture, or Safari MCP's other debugging tools.
 

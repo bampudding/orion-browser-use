@@ -1,6 +1,6 @@
 {
   "name": "orion-browser-use",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Control the user's Orion tabs through macOS Apple Events.",
   "author": { "name": "bampudding", "url": "https://github.com/bampudding" },
   "repository": "https://github.com/bampudding/orion-browser-use",

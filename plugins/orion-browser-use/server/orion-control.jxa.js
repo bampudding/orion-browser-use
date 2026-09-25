@@ -41,6 +41,7 @@ function dispatch(app, request) {
   if (request.operation === "tabs.navigate") return navigateTab(app, request.url, request.ref);
   if (request.operation === "page.snapshot") return snapshot(app, request.ref);
   if (request.operation === "page.evaluate") return evaluatePage(app, request.code, request.ref);
+  if (request.operation === "page.locator") return locator(app, request);
   throw new Error("unknown_orion_operation: " + request.operation);
 }
 
@@ -163,6 +164,46 @@ function evaluatePage(app, code, ref) {
   var target = activeTab(app, ref);
   var wrapped = "(function(){var value=(0,eval)(" + JSON.stringify(code) + ");if(value===undefined)return JSON.stringify({type:'undefined'});try{return JSON.stringify({type:'value',value:value})}catch(error){return JSON.stringify({type:typeof value,value:String(value),serializationError:String(error)})}})()";
   return parsePageJson(app.doJavaScript(wrapped, { in: target }));
+}
+
+function locator(app, request) {
+  if (typeof request.selector !== "string" || request.selector.length > 2000) throw new Error("Invalid CSS selector.");
+  var target = activeTab(app, request.ref);
+  var selector = JSON.stringify(request.selector);
+  var action = request.action;
+  var value = JSON.stringify(request.value);
+  var script = "(function(){var matches=Array.from(document.querySelectorAll(" + selector + "));var action=" + JSON.stringify(action) + ";if(action==='count')return {count:matches.length};if(action==='text')return {text:matches.map(function(e){return (e.innerText||e.textContent||'').trim()}).join('\\n').slice(0,12000)};if(action==='waitFor'){var o=" + value + ";function visible(e){var s=getComputedStyle(e),r=e.getBoundingClientRect();return s.display!=='none'&&s.visibility!=='hidden'&&Number(s.opacity)!==0&&r.width>0&&r.height>0}var found=matches.length>0,shown=found&&matches.some(visible),ok=o.state==='attached'?found:o.state==='visible'?shown:o.state==='hidden'?!shown:!found;return {ready:ok,state:o.state}}if(matches.length!==1)throw new Error('Expected one element for selector; found '+matches.length+'. Inspect the page and use a more specific selector.');var e=matches[0];if(action==='click'){if(e.disabled||e.getAttribute('aria-disabled')==='true')throw new Error('Element is disabled.');e.scrollIntoView({block:'center',inline:'center'});e.click();return {clicked:true}}if(action==='fill'){if(!('value'in e)&&!e.isContentEditable)throw new Error('Element is not editable.');e.focus();if(e.isContentEditable)e.textContent=" + value + ";else{var proto=e.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;var d=Object.getOwnPropertyDescriptor(proto,'value');if(d&&d.set)d.set.call(e," + value + ");else e.value=" + value + ";}e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));return {filled:true,value:e.isContentEditable?e.textContent:e.value}}if(action==='check'){if(e.type!=='checkbox'&&e.type!=='radio')throw new Error('Element is not a checkbox or radio input.');e.checked=!!" + value + ";e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));return {checked:e.checked}}if(action==='selectOption'){if(e.tagName!=='SELECT')throw new Error('Element is not a select.');e.value=" + value + ";e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));return {value:e.value}}if(action==='scrollIntoView'){e.scrollIntoView({block:'center',inline:'center'});return {scrolled:true}}throw new Error('Unknown locator action: '+action)})()";
+  if (action === "waitFor") {
+    var deadline = Date.now() + Number(request.value.timeout || 0);
+    while (true) {
+      var state = runPageJson(app, script, request.ref);
+      if (state && state.ready) return state;
+      if (Date.now() >= deadline) throw new Error("Timed out waiting for selector to become " + request.value.state + ".");
+      pauseForOrion(150);
+    }
+  }
+  var deadline = Date.now() + 10000;
+  while (true) {
+    var rawResult = runPageJson(app, script, request.ref);
+    if (rawResult != null) return rawResult;
+    if (Date.now() >= deadline) throw new Error("The page is still loading; locator operation timed out.");
+    pauseForOrion(150);
+  }
+}
+
+function runPageJson(app, code, ref) {
+  var target = activeTab(app, ref);
+  var wrapped = "(function(){try{var value=(0,eval)(" + JSON.stringify(code) + ");if(value===undefined)return JSON.stringify({type:'undefined'});return JSON.stringify({type:'value',value:value})}catch(error){return JSON.stringify({type:'error',error:String(error&&error.message||error)})}})()";
+  var raw = app.doJavaScript(wrapped, { in: target });
+  if (raw == null) return null;
+  var result = parsePageJson(raw);
+  if (result && result.type === "error") throw new Error(result.error);
+  return result && result.type === "value" ? result.value : null;
+}
+
+function pauseForOrion(milliseconds) {
+  ObjC.import("Foundation");
+  $.NSThread.sleepForTimeInterval(milliseconds / 1000);
 }
 
 function parsePageJson(value) {
